@@ -152,17 +152,24 @@ if df is not None:
 else:
 
     st.subheader('Quick demo (manual input)')
-    # Updated default values for manual input demo
-    demo_values = ['80'] * window_size + ['170'] * 10
-    manual_text = st.text_area('Enter recent Close prices as comma-separated numbers (most recent last). Need at least window_size values.', value=','.join(demo_values))
+    # Updated default values for manual input demo: use random values between 80 and 170
+    demo_values = [str(random.randint(80, 170)) for _ in range(window_size + 10)]
+    manual_text = st.text_area(
+        'Enter recent Close prices as comma-separated numbers (most recent last). Need at least window_size values.',
+        value=','.join(demo_values)
+    )
     if st.button('Run demo prediction'):
         try:
-            values = [float(x.strip()) for x in manual_text.split(',') if x.strip()!='']
+            values = [float(x.strip()) for x in manual_text.split(',') if x.strip() != '']
             if len(values) < window_size:
                 st.error(f'Provide at least {window_size} values.')
             else:
                 recent_values = pd.Series(values)
-                days = st.number_input('Days to predict (demo)', min_value=1, max_value=365, value=7, key='demo_days')
+                # Extend days to predict to at least 14
+                days = st.number_input(
+                    'Days to predict (demo)',
+                    min_value=14, max_value=365, value=14, key='demo_days'
+                )
                 preds = predict_next_days(model, scaler, recent_values, days, window_size)
 
                 pred_index = list(range(len(values), len(values) + days))
