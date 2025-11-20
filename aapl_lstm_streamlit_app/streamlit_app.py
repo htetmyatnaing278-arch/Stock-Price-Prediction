@@ -1,5 +1,3 @@
-
-
 import os
 import random
 import numpy as np
@@ -10,41 +8,41 @@ import plotly.graph_objs as go
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 
-
+# Reproducibility
 random_seed = 123
 random.seed(random_seed)
 np.random.seed(random_seed)
 os.environ['PYTHONHASHSEED'] = str(random_seed)
-
 os.environ['TF_DETERMINISTIC_OPS'] = '1'
 try:
     tf.random.set_seed(random_seed)
 except Exception:
     pass
 
-
+# Load model, scaler, and window size
 @st.cache_resource
-def load_saved_components(model_path: str = 'lstm_aapl_model.h5', scaler_path: str = 'scaler.pkl', window_path: str = 'window_size.txt'):
-    """Load model, scaler and window size from disk. Cached to speed up app."""
+def load_saved_components():
+    model_path = 'aapl_lstm_streamlit_app/lstm_aapl_model.h5'
+    scaler_path = 'aapl_lstm_streamlit_app/scaler.pkl'
+    window_path = 'aapl_lstm_streamlit_app/window_size.txt'
+
+    if not os.path.exists(model_path):
+        st.error(f"Model file not found at: {model_path}")
+        st.stop()
+    if not os.path.exists(scaler_path):
+        st.error(f"Scaler file not found at: {scaler_path}")
+        st.stop()
+    if not os.path.exists(window_path):
+        st.error(f"Window size file not found at: {window_path}")
+        st.stop()
 
     model = load_model(model_path, compile=False)
+    scaler = joblib.load(scaler_path)
 
-
-    scaler = None
-    if os.path.exists(scaler_path):
-        scaler = joblib.load(scaler_path)
-
-
-    window_size = 90
-    if os.path.exists(window_path):
-        try:
-            with open(window_path, 'r') as f:
-                window_size = int(f.read().strip())
-        except Exception:
-            window_size = 90
+    with open(window_path, 'r') as f:
+        window_size = int(f.read().strip())
 
     return model, scaler, window_size
-
 
 def create_sequences(data_array, window_size):
     X = []
@@ -54,10 +52,7 @@ def create_sequences(data_array, window_size):
     X = np.reshape(X, (X.shape[0], X.shape[1], 1))
     return X
 
-
 def predict_next_days(model, scaler, recent_values, days, window_size):
-    """Predict recursively next `days` values given recent_values (raw, unscaled pandas Series)."""
-
     scaled = scaler.transform(recent_values.values.reshape(-1, 1))
     scaled_list = list(scaled.flatten())
 
@@ -72,23 +67,15 @@ def predict_next_days(model, scaler, recent_values, days, window_size):
     preds = scaler.inverse_transform(preds_scaled).flatten()
     return preds
 
-
-
+# Streamlit UI
 st.set_page_config(page_title='AAPL Close Price Predictor', layout='wide')
-st.title('AAPL Close Price — LSTM Predictor')
+st.title('📈 AAPL Close Price — LSTM Predictor')
 st.write('Upload a CSV with a `Date` column and a `Close` column (or just a `Close` column).')
 
+model, scaler, window_size = load_saved_components()
+st.success(f'Model loaded successfully — window_size = {window_size}')
 
-st.sidebar.header('Model files (repo)')
-model_path = st.sidebar.text_input('Saved model path', 'aapl_lstm_streamlit_app/lstm_aapl_model.h5')
-scaler_path = st.sidebar.text_input('Saved scaler path', 'aapl_lstm_streamlit_app/scaler.pkl')
-window_path = st.sidebar.text_input('Window size file path', 'aapl_lstm_streamlit_app/window_size.txt')
-
-model, scaler, window_size = load_saved_components(model_path, scaler_path, window_path)
-st.sidebar.success(f'Model loaded — window_size = {window_size}')
-
-
-uploaded_file = st.file_uploader('Upload CSV file (Date,Close). If none provided, use your own data in repo.', type=['csv'])
+uploaded_file = st.file_uploader('Upload CSV file (Date,Close). If none provided, use manual input below.', type=['csv'])
 
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
@@ -96,34 +83,26 @@ else:
     st.info('No file uploaded. You can still enter a small recent Close history manually for a quick demo.')
     df = None
 
-
 if df is not None:
-
     cols = [c.lower() for c in df.columns]
     if 'date' in cols:
-
         df.columns = [c.strip() for c in df.columns]
         date_col = [c for c in df.columns if c.lower() == 'date'][0]
         df[date_col] = pd.to_datetime(df[date_col])
         df = df.sort_values(date_col).reset_index(drop=True)
         df.set_index(date_col, inplace=True)
 
-
-    if 'close' not in [c.lower() for c in df.columns]:
+    if 'close' not in cols:
         st.error('Uploaded CSV must contain a `Close` column (case-insensitive).')
     else:
         close_col = [c for c in df.columns if c.lower() == 'close'][0]
         series_close = df[close_col].astype(float)
 
-        st.subheader('Preview')
+        st.subheader('📊 Preview')
         st.dataframe(df.tail(10))
 
-
         days = st.number_input('Days to predict', min_value=1, max_value=365, value=7)
-
-
-        recent_len = st.number_input('How many recent days from your history to use for recursive prediction', min_value=window_size, max_value=len(series_close), value=window_size + 20)
-
+        recent_len = st.number_input('How many recent days to use for prediction', min_value=window_size, max_value=len(series_close), value=window_size + 20)
         recent_values = series_close[-recent_len:]
 
         if st.button('Run prediction'):
@@ -138,26 +117,24 @@ if df is not None:
 
                 preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_index)
 
-
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=series_close.index, y=series_close.values, name='Historical Close', mode='lines'))
                 fig.add_trace(go.Scatter(x=preds_df.index, y=preds_df['Predicted_Close'], name='Predicted Close', mode='lines+markers'))
-                fig.update_layout(title='Historical Close and Predicted Close', xaxis_title='Date', yaxis_title='Price')
+                fig.update_layout(title='Historical vs Predicted Close', xaxis_title='Date', yaxis_title='Price')
                 st.plotly_chart(fig, use_container_width=True)
 
-                st.subheader('Predicted values')
+                st.subheader('📈 Predicted values')
                 st.dataframe(preds_df)
-
-
                 st.success('Prediction complete.')
 
 else:
+    st.subheader('🧪 Quick demo (manual input)')
+    demo_values = ['80'] * window_size + ['170'] * 10
+    manual_text = st.text_area('Enter recent Close prices as comma-separated numbers:', value=','.join(demo_values))
 
-    st.subheader('Quick demo (manual input)')
-    manual_text = st.text_area('Enter recent Close prices as comma-separated numbers (most recent last). Need at least window_size values.', value=','.join(['150'] * (window_size + 10)))
     if st.button('Run demo prediction'):
         try:
-            values = [float(x.strip()) for x in manual_text.split(',') if x.strip()!='']
+            values = [float(x.strip()) for x in manual_text.split(',') if x.strip() != '']
             if len(values) < window_size:
                 st.error(f'Provide at least {window_size} values.')
             else:
@@ -178,4 +155,4 @@ else:
             st.error(f'Error parsing input: {e}')
 
 st.markdown('---')
-st.caption('Note: This app expects the model to have been trained and saved separately. Do not use predictions for trading without further validation.')
+st.caption('⚠️ This app uses a pre-trained model. Predictions are for educational purposes only and should not be used for trading decisions.')
