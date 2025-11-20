@@ -124,7 +124,7 @@ if df is not None:
             'How many recent days to use for prediction',
             min_value=window_size,
             max_value=len(series_close),
-            value=window_size + 20
+            value=min(len(series_close), window_size + 20)
         )
         recent_values = series_close[-recent_len:]
 
@@ -209,4 +209,4 @@ else:
             st.error(f'Error parsing input: {e}')
 
 st.markdown('---')
-
+st.caption('⚠️ This app uses a pre-trained model. Predictions are for educational purposes only and should not be used for trading decisions.')
