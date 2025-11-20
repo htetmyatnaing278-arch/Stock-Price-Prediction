@@ -79,8 +79,11 @@ st.title('AAPL Close Price — LSTM Predictor')
 st.write('Upload a CSV with a `Date` column and a `Close` column (or just a `Close` column).')
 
 
-# Removed sidebar configuration
-model, scaler, window_size = load_saved_components('lstm_aapl_model.h5', 'scaler.pkl', 'window_size.txt')
+model, scaler, window_size = load_saved_components(
+    'aapl_lstm_streamlit_app/lstm_aapl_model.h5',
+    'aapl_lstm_streamlit_app/scaler.pkl',
+    'aapl_lstm_streamlit_app/window_size.txt'
+)
 
 
 uploaded_file = st.file_uploader('Upload CSV file (Date,Close). If none provided, use your own data in repo.', type=['csv'])
