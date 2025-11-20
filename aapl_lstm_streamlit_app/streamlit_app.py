@@ -23,7 +23,12 @@ except Exception:
 
 
 @st.cache_resource
-def load_saved_components(model_path: str = 'lstm_aapl_model.h5', scaler_path: str = 'scaler.pkl', window_path: str = 'window_size.txt'):
+def load_saved_components(
+    model_path: str = 'aapl_lstm_streamlit_app/lstm_aapl_model.h5',
+    scaler_path: str = 'aapl_lstm_streamlit_app/scaler.pkl',
+    window_path: str = 'aapl_lstm_streamlit_app/window_size.txt'
+):
+
     """Load model, scaler and window size from disk. Cached to speed up app."""
 
     model = load_model(model_path, compile=False)
