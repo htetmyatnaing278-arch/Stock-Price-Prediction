@@ -20,12 +20,24 @@ except Exception:
 
 @st.cache_resource
 def load_saved_components(model_path: str = 'lstm_aapl_model.h5', scaler_path: str = 'scaler.pkl', window_path: str = 'window_size.txt'):
-    """Load model, scaler and window size from disk. Cached to speed up app."""
-    model = load_model(model_path, compile=False)
+    """Load model, scaler and window size from disk. Cached to speed up app. Handles missing files gracefully."""
+    model = None
     scaler = None
+    window_size = 90
+    # Try loading model
+    try:
+        if os.path.exists(model_path):
+            model = load_model(model_path, compile=False)
+        else:
+            st.error(f"Model file `{model_path}` not found. Please upload or specify correct model path.")
+    except Exception as e:
+        st.error(f"Error loading model: {e}")
+    # Try loading scaler
     if os.path.exists(scaler_path):
         scaler = joblib.load(scaler_path)
-    window_size = 90
+    else:
+        st.warning(f"Scaler file `{scaler_path}` not found. Some predictions may fail.")
+    # Try loading window size
     if os.path.exists(window_path):
         try:
             with open(window_path, 'r') as f:
@@ -44,6 +56,9 @@ def create_sequences(data_array, window_size):
 
 def predict_next_days(model, scaler, recent_values, days, window_size):
     """Predict recursively next `days` values given recent_values (raw, unscaled pandas Series)."""
+    if scaler is None or model is None:
+        st.error("Prediction cannot proceed: model or scaler not loaded.")
+        return None
     scaled = scaler.transform(recent_values.values.reshape(-1, 1))
     scaled_list = list(scaled.flatten())
     preds_scaled = []
@@ -58,24 +73,63 @@ def predict_next_days(model, scaler, recent_values, days, window_size):
 
 st.set_page_config(page_title='AAPL Close Price Predictor', layout='wide')
 st.title('AAPL Close Price — LSTM Predictor')
-st.write('Upload a CSV with a `Date` column and a `Close` column (or just a `Close` column).')
+st.markdown('<p style="font-size:1.2rem;">Predict Apple Inc. (AAPL) closing prices using your trained LSTM model. Upload data and model files or try a quick demo below.</p>', unsafe_allow_html=True)
 
-# Removed sidebar and put input fields into main area
-st.header('Model files (repo)')
+st.header('Model Files')
 model_path = st.text_input('Saved model path', 'lstm_aapl_model.h5')
 scaler_path = st.text_input('Saved scaler path', 'scaler.pkl')
 window_path = st.text_input('Window size file path', 'window_size.txt')
 
 model, scaler, window_size = load_saved_components(model_path, scaler_path, window_path)
-st.success(f'Model loaded — window_size = {window_size}')
+if model is not None:
+    st.success(f'Model loaded — window_size = {window_size}')
+else:
+    st.warning("No model loaded: predictions are disabled.")
 
-uploaded_file = st.file_uploader('Upload CSV file (Date,Close). If none provided, use your own data in repo.', type=['csv'])
+uploaded_file = st.file_uploader('Upload CSV file with `Date` and `Close` columns. If none provided, use manual input below.', type=['csv'])
 
+df = None
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
-else:
-    st.info('No file uploaded. You can still enter a small recent Close history manually for a quick demo.')
-    df = None
+
+# Main area: chart and controls
+col1, col2 = st.columns([3, 2])
+
+with col1:
+    st.subheader('Prediction Chart')
+
+    def plot_beautiful_chart(series_close, preds_df, title, xdates=None):
+        fig = go.Figure()
+        # Historical
+        fig.add_trace(go.Scatter(
+            x=series_close.index if xdates is None else xdates,
+            y=series_close.values,
+            name='Historical Close',
+            mode='lines',
+            line=dict(color="#4e73df", width=3),
+            hoverinfo='x+y',
+        ))
+        # Predictions
+        fig.add_trace(go.Scatter(
+            x=preds_df.index,
+            y=preds_df['Predicted_Close'],
+            name='Predicted Close',
+            mode='lines+markers',
+            marker=dict(size=7, color="#e74a3b"),
+            line=dict(color="#e74a3b", dash='dash', width=2),
+            hoverinfo='x+y'
+        ))
+        fig.update_layout(
+            title=title,
+            xaxis_title='Date',
+            yaxis_title='Price',
+            hovermode="x unified",
+            plot_bgcolor='#fff',
+            font=dict(size=16, family="Raleway, Arial"),
+            legend=dict(orientation="h", x=0.5, y=-0.15, xanchor="center"),
+            margin=dict(l=20, r=20, t=80, b=40),
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
 if df is not None:
     cols = [c.lower() for c in df.columns]
@@ -91,58 +145,56 @@ if df is not None:
         close_col = [c for c in df.columns if c.lower() == 'close'][0]
         series_close = df[close_col].astype(float)
 
-        st.subheader('Preview')
-        st.dataframe(df.tail(10))
-
-        days = st.number_input('Days to predict', min_value=1, max_value=365, value=7)
-        recent_len = st.number_input(
-            'How many recent days from your history to use for recursive prediction',
-            min_value=window_size,
-            max_value=len(series_close),
-            value=window_size + 20
-        )
-        recent_values = series_close[-recent_len:]
+        with col2:
+            st.subheader('Configure Prediction')
+            st.dataframe(df.tail(10))
+            days = st.number_input('Days to predict', min_value=1, max_value=365, value=7)
+            recent_len = st.number_input(
+                'History length for recursive prediction:',
+                min_value=window_size,
+                max_value=len(series_close),
+                value=window_size + 20
+            )
+            recent_values = series_close[-recent_len:]
 
         if st.button('Run prediction'):
             with st.spinner('Predicting...'):
                 preds = predict_next_days(model, scaler, recent_values, days, window_size)
-                last_index = series_close.index[-1]
-                if isinstance(last_index, (pd.Timestamp, pd.DatetimeIndex.dtype)):
-                    pred_index = pd.date_range(start=last_index + pd.Timedelta(days=1), periods=days, freq='B')
+                if preds is None:
+                    st.warning("Prediction failed due to missing model or scaler.")
                 else:
-                    pred_index = range(len(series_close), len(series_close) + days)
-                preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_index)
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=series_close.index, y=series_close.values, name='Historical Close', mode='lines'))
-                fig.add_trace(go.Scatter(x=preds_df.index, y=preds_df['Predicted_Close'], name='Predicted Close', mode='lines+markers'))
-                fig.update_layout(title='Historical Close and Predicted Close', xaxis_title='Date', yaxis_title='Price')
-                st.plotly_chart(fig, use_container_width=True)
-                st.subheader('Predicted values')
-                st.dataframe(preds_df)
-                st.success('Prediction complete.')
+                    last_index = series_close.index[-1]
+                    if isinstance(last_index, (pd.Timestamp, pd.DatetimeIndex.dtype)):
+                        pred_index = pd.date_range(start=last_index + pd.Timedelta(days=1), periods=days, freq='B')
+                    else:
+                        pred_index = range(len(series_close), len(series_close) + days)
+                    preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_index)
+                    plot_beautiful_chart(series_close, preds_df, 'Historical Close and Predicted Close')
+                    st.dataframe(preds_df)
+                    st.success('Prediction complete.')
 else:
-    st.subheader('Quick demo (manual input)')
+    # Manual demo input
+    st.subheader('Quick Demo (Manual Input)')
     manual_text = st.text_area(
-        'Enter recent Close prices as comma-separated numbers (most recent last). Need at least window_size values.',
+        f'Enter recent Close prices (comma-separated, most recent last). Need ≥ {window_size} values.',
         value=','.join(['150'] * (window_size + 10))
     )
+    days = st.number_input('Days to predict (demo)', min_value=1, max_value=365, value=7, key='demo_days')
     if st.button('Run demo prediction'):
         try:
-            values = [float(x.strip()) for x in manual_text.split(',') if x.strip()!='']
+            values = [float(x.strip()) for x in manual_text.split(',') if x.strip() != '']
             if len(values) < window_size:
                 st.error(f'Provide at least {window_size} values.')
             else:
                 recent_values = pd.Series(values)
-                days = st.number_input('Days to predict (demo)', min_value=1, max_value=365, value=7, key='demo_days')
                 preds = predict_next_days(model, scaler, recent_values, days, window_size)
-                pred_index = list(range(len(values), len(values) + days))
-                preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_index)
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=list(range(len(values))), y=values, name='Manual history'))
-                fig.add_trace(go.Scatter(x=preds_df.index, y=preds_df['Predicted_Close'], name='Predicted'))
-                fig.update_layout(title='Manual input — Predicted Close')
-                st.plotly_chart(fig, use_container_width=True)
-                st.dataframe(preds_df)
+                if preds is None:
+                    st.warning("Prediction failed due to missing model or scaler.")
+                else:
+                    pred_index = list(range(len(values), len(values) + days))
+                    preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_index)
+                    plot_beautiful_chart(pd.Series(values), preds_df, 'Manual input — Predicted Close', xdates=list(range(len(values))))
+                    st.dataframe(preds_df)
         except Exception as e:
             st.error(f'Error parsing input: {e}')
 
