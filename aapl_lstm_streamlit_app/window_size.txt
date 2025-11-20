@@ -1,1 +1,6 @@
-90
+{
+  "window_size": 90,
+  "min_window_size": 7,
+  "max_window_size": 180,
+  "default_window_size": 7
+}
