@@ -115,32 +115,34 @@ if df is not None:
                 st.dataframe(preds_df)
                 st.success('Prediction complete.')
 else:
-    st.subheader('Last 7 days Close price')
-    demo_days = 7  # Force demo length to 7; do NOT use window_size here or from file
-    demo_values = [str(random.randint(80, 170)) for _ in range(demo_days)]
+    st.subheader('Enter Recent Close Prices')
+    st.write(f"Provide at least {window_size} recent Close values, comma-separated (most recent last). More history may improve results.")
+    demo_default_len = max(window_size, 7)
+    demo_values = [str(random.randint(80, 170)) for _ in range(demo_default_len)]
     manual_text = st.text_area(
-        'Enter last 7 days Close prices as comma-separated numbers (most recent last). Provide exactly 7 values.',
+        f'Enter last N days Close prices (min {window_size}), separated by commas.',
         value=','.join(demo_values)
     )
+    try:
+        values = [float(x.strip()) for x in manual_text.split(',') if x.strip() != '']
+        valid_len = len(values) >= window_size
+    except Exception:
+        values = []
+        valid_len = False
     days = st.number_input(
         'Days to predict (demo)', min_value=7, max_value=14, value=7, key='demo_days'
     )
     if st.button('Run demo prediction'):
-        try:
-            values = [float(x.strip()) for x in manual_text.split(',') if x.strip() != '']
-            if len(values) != demo_days:
-                st.error(f'Provide exactly {demo_days} values.')
-            else:
-                recent_values = pd.Series(values)
-                preds = predict_next_days(model, scaler, recent_values, days, demo_days)
-                pred_index = list(range(len(values), len(values) + days))
-                preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_index)
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=list(range(len(values))), y=values, name=f'Manual last 7 days Close'))
-                fig.add_trace(go.Scatter(x=preds_df.index, y=preds_df['Predicted_Close'], name='Predicted', line=dict(color='red')))
-                fig.update_layout(title='Manual input — Predicted Close')
-                st.plotly_chart(fig, use_container_width=True)
-                st.dataframe(preds_df)
-        except Exception as e:
-            st.error(f'Error parsing input: {e}')
-st.markdown('---')
+        if not valid_len:
+            st.error(f'Provide at least {window_size} values.')
+        else:
+            recent_values = pd.Series(values)
+            preds = predict_next_days(model, scaler, recent_values, days, window_size)
+            pred_index = list(range(len(values), len(values) + days))
+            preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_index)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=list(range(len(values))), y=values, name=f'Manual input'))
+            fig.add_trace(go.Scatter(x=preds_df.index, y=preds_df['Predicted_Close'], name='Predicted', line=dict(color='red')))
+            fig.update_layout(title='Manual input — Predicted Close')
+            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(preds_df)
