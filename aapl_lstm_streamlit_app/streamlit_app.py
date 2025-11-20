@@ -79,13 +79,8 @@ st.title('AAPL Close Price — LSTM Predictor')
 st.write('Upload a CSV with a `Date` column and a `Close` column (or just a `Close` column).')
 
 
-st.sidebar.header('Model files (repo)')
-model_path = st.sidebar.text_input('Saved model path', 'aapl_lstm_streamlit_app/lstm_aapl_model.h5')
-scaler_path = st.sidebar.text_input('Saved scaler path', 'aapl_lstm_streamlit_app/scaler.pkl')
-window_path = st.sidebar.text_input('Window size file path', 'aapl_lstm_streamlit_app/window_size.txt')
-
-model, scaler, window_size = load_saved_components(model_path, scaler_path, window_path)
-st.sidebar.success(f'Model loaded — window_size = {window_size}')
+# Removed sidebar configuration
+model, scaler, window_size = load_saved_components('lstm_aapl_model.h5', 'scaler.pkl', 'window_size.txt')
 
 
 uploaded_file = st.file_uploader('Upload CSV file (Date,Close). If none provided, use your own data in repo.', type=['csv'])
@@ -154,7 +149,9 @@ if df is not None:
 else:
 
     st.subheader('Quick demo (manual input)')
-    manual_text = st.text_area('Enter recent Close prices as comma-separated numbers (most recent last). Need at least window_size values.', value=','.join(['150'] * (window_size + 10)))
+    # Updated default values for manual input demo
+    demo_values = ['80'] * window_size + ['170'] * 10
+    manual_text = st.text_area('Enter recent Close prices as comma-separated numbers (most recent last). Need at least window_size values.', value=','.join(demo_values))
     if st.button('Run demo prediction'):
         try:
             values = [float(x.strip()) for x in manual_text.split(',') if x.strip()!='']
