@@ -117,11 +117,9 @@ if df is not None:
 else:
     st.subheader('Enter Recent Close Prices')
     st.write(f"Provide at least {window_size} recent Close values, comma-separated (most recent last). More history may improve results.")
-    demo_default_len = max(window_size, 7)
-    demo_values = [str(random.randint(80, 170)) for _ in range(demo_default_len)]
     manual_text = st.text_area(
         f'Enter last N days Close prices (min {window_size}), separated by commas.',
-        value=','.join(demo_values)
+        value=''  # No demo values, just let user paste/enter their own!
     )
     try:
         values = [float(x.strip()) for x in manual_text.split(',') if x.strip() != '']
@@ -130,7 +128,7 @@ else:
         values = []
         valid_len = False
     days = st.number_input(
-        'Days to predict (demo)', min_value=7, max_value=14, value=7, key='demo_days'
+        'Days to predict (demo)', min_value=1, max_value=30, value=7, key='demo_days'  # Give more flexibility in prediction days
     )
     if st.button('Run demo prediction'):
         if not valid_len:
