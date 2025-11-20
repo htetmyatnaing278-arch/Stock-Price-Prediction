@@ -84,9 +84,9 @@ st.write('Upload a CSV with a `Date` column and a `Close` column (or just a `Clo
 
 
 st.sidebar.header('Model files (repo)')
-model_path = st.sidebar.text_input('Saved model path', 'lstm_aapl_model.h5')
-scaler_path = st.sidebar.text_input('Saved scaler path', 'scaler.pkl')
-window_path = st.sidebar.text_input('Window size file path', 'window_size.txt')
+model_path = st.sidebar.text_input('Saved model path', 'aapl_lstm_streamlit_app/lstm_aapl_model.h5')
+scaler_path = st.sidebar.text_input('Saved scaler path', 'aapl_lstm_streamlit_app/scaler.pkl')
+window_path = st.sidebar.text_input('Window size file path', 'aapl_lstm_streamlit_app/window_size.txt')
 
 model, scaler, window_size = load_saved_components(model_path, scaler_path, window_path)
 st.sidebar.success(f'Model loaded — window_size = {window_size}')
