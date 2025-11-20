@@ -116,6 +116,7 @@ if df is not None:
                 st.success('Prediction complete.')
 else:
     st.subheader('Enter Recent Close Prices')
+    # FLEXIBLE MINIMUM: Use window_size, not hardcoded 90
     st.write(f"Provide at least {window_size} recent Close values, comma-separated (most recent last). More history may improve results.")
     manual_text = st.text_area(
         f'Enter last N days Close prices (min {window_size}), separated by commas.',
@@ -127,8 +128,9 @@ else:
     except Exception:
         values = []
         valid_len = False
+    # FLEXIBLE prediction days
     days = st.number_input(
-        'Days to predict (demo)', min_value=1, max_value=30, value=7, key='demo_days'  # Give more flexibility in prediction days
+        'Days to predict (demo)', min_value=1, max_value=30, value=7, key='demo_days'
     )
     if st.button('Run demo prediction'):
         if not valid_len:
