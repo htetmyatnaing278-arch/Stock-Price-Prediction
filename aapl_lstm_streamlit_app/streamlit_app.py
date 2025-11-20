@@ -115,8 +115,8 @@ if df is not None:
                 st.dataframe(preds_df)
                 st.success('Prediction complete.')
 else:
-    st.subheader('last 7 days Close price)')
-    demo_days = window_size  # window_size is 7 by default
+    st.subheader('Last 7 days Close price')
+    demo_days = 7  # Force demo length to 7; do NOT use window_size here or from file
     demo_values = [str(random.randint(80, 170)) for _ in range(demo_days)]
     manual_text = st.text_area(
         'Enter last 7 days Close prices as comma-separated numbers (most recent last). Provide exactly 7 values.',
@@ -132,11 +132,11 @@ else:
                 st.error(f'Provide exactly {demo_days} values.')
             else:
                 recent_values = pd.Series(values)
-                preds = predict_next_days(model, scaler, recent_values, days, window_size)
+                preds = predict_next_days(model, scaler, recent_values, days, demo_days)
                 pred_index = list(range(len(values), len(values) + days))
                 preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_index)
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(x=list(range(len(values))), y=values, name='Manual last 7 days Close'))
+                fig.add_trace(go.Scatter(x=list(range(len(values))), y=values, name=f'Manual last 7 days Close'))
                 fig.add_trace(go.Scatter(x=preds_df.index, y=preds_df['Predicted_Close'], name='Predicted', line=dict(color='red')))
                 fig.update_layout(title='Manual input — Predicted Close')
                 st.plotly_chart(fig, use_container_width=True)
@@ -144,4 +144,3 @@ else:
         except Exception as e:
             st.error(f'Error parsing input: {e}')
 st.markdown('---')
-st.caption('Note: This app expects the model to have been trained and saved separately. Do not use predictions for trading without further validation.')
