@@ -163,13 +163,16 @@ if df is not None:
                 st.dataframe(preds_df)
                 st.success('Prediction complete.')
 
-# -----------------------------
-# Manual input demo
-# -----------------------------
 else:
-    st.subheader('🧪 Quick demo (manual input)')
+    st.subheader('Manual Input')
+
+    # Generate default 90 random values between 155 and 180
+    default_values = [str(random.randint(155, 180)) for _ in range(90)]
+    default_text = ','.join(default_values)
+
     manual_text = st.text_area(
-        f'Enter recent Close prices as comma-separated numbers (at least {window_size} values):'
+        f'Enter recent Close prices as comma-separated numbers (minimum {window_size} values):',
+        value=default_text
     )
 
     days = st.number_input(
@@ -183,27 +186,29 @@ else:
     if st.button('Run demo prediction'):
         try:
             values = [float(x.strip()) for x in manual_text.split(',') if x.strip() != '']
+            # Pad values if less than window_size
             if len(values) < window_size:
-                st.error(f'Provide at least {window_size} values for prediction.')
-            else:
-                recent_values = pd.Series(values)
-                preds = predict_next_days(model, scaler, recent_values, days, window_size)
+                repeats = (window_size // len(values)) + 1
+                values = (values * repeats)[:window_size]
 
-                pred_index = list(range(len(values), len(values) + days))
-                preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_index)
+            recent_values = pd.Series(values)
+            preds = predict_next_days(model, scaler, recent_values, days, window_size)
 
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=list(range(len(values))), y=values,
-                    name='Manual history'
-                ))
-                fig.add_trace(go.Scatter(
-                    x=preds_df.index, y=preds_df['Predicted_Close'],
-                    name='Predicted'
-                ))
-                fig.update_layout(title='Manual input — Predicted Close')
-                st.plotly_chart(fig, use_container_width=True)
-                st.dataframe(preds_df)
+            pred_index = list(range(len(values), len(values) + days))
+            preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_index)
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=list(range(len(values))), y=values,
+                name='Manual history'
+            ))
+            fig.add_trace(go.Scatter(
+                x=preds_df.index, y=preds_df['Predicted_Close'],
+                name='Predicted'
+            ))
+            fig.update_layout(title='Manual input — Predicted Close')
+            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(preds_df)
 
         except Exception as e:
             st.error(f'Error parsing input: {e}')
