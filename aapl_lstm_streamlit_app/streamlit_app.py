@@ -76,7 +76,7 @@ def get_latest_aapl_price():
         hist = ticker.history(period="1d")
         return float(hist['Close'].iloc[-1])
     except:
-        return None   # silent failure
+        return None
 
 # -----------------------------
 # Streamlit UI
@@ -88,17 +88,15 @@ model, scaler, window_size = load_saved_components()
 st.success(f'Model loaded successfully — window_size = {window_size}')
 
 # -----------------------------
-# Manual Input (Clean Version)
+# Manual Input
 # -----------------------------
 st.subheader('Manual Input')
 
 latest_price = get_latest_aapl_price()
-
-# If live price fails, silently set a neutral middle value
 if latest_price is None:
     latest_price = 170.0
 
-# default prices around latest price
+# Default prices around latest price
 default_values = [
     str(round(latest_price + random.uniform(-3, 3), 2))
     for _ in range(window_size)
@@ -126,14 +124,30 @@ if st.button('Predict'):
         pred_index = list(range(len(values), len(values) + days))
         preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_index)
 
+        # -----------------------------
+        # Plotting
+        # -----------------------------
         fig = go.Figure()
+
+        # Manual history
+        history_x = list(range(len(values)))
+        history_y = values
         fig.add_trace(go.Scatter(
-            x=list(range(len(values))), y=values,
+            x=history_x,
+            y=history_y,
             name='Manual history'
         ))
+
+        # Predicted values (connected to last input)
+        pred_x = [history_x[-1]] + list(pred_index)
+        pred_y = [history_y[-1]] + list(preds_df['Predicted_Close'])
         fig.add_trace(go.Scatter(
-            x=preds_df.index, y=preds_df['Predicted_Close'],
-            name='Predicted', mode='lines+markers', line = dict(color='red')))
+            x=pred_x,
+            y=pred_y,
+            name='Predicted',
+            mode='lines+markers',
+            line=dict(color='red')
+        ))
 
         fig.update_layout(title='Manual Input — Predicted Close')
         st.plotly_chart(fig, use_container_width=True)
