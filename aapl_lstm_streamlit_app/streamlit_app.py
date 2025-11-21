@@ -136,7 +136,7 @@ if st.button('Predict'):
         ))
         fig.add_trace(go.Scatter(
             x=preds_df.index, y=preds_df['Predicted_Close'],
-            name='Predicted', mode='lines+markers', line=dict(color='red'))
+            name='Predicted', mode='lines+markers', line=dict(color='red')))
 
         fig.update_layout(title='Manual Input — Predicted Close')
         st.plotly_chart(fig, use_container_width=True)
