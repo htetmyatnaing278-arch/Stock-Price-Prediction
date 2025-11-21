@@ -8,6 +8,7 @@ import plotly.graph_objs as go
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 import yfinance as yf
+from datetime import datetime, timedelta
 
 # -----------------------------
 # Reproducibility
@@ -121,8 +122,16 @@ if st.button('Predict'):
         recent_values = pd.Series(values)
         preds = predict_next_days(model, scaler, recent_values, days, window_size)
 
-        pred_index = list(range(len(values), len(values) + days))
-        preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_index)
+        # -----------------------------
+        # Create date index for x-axis
+        # -----------------------------
+        start_date = datetime.today()
+        history_dates = [start_date - timedelta(days=window_size - i - 1) for i in range(len(values))]
+        pred_dates = [history_dates[-1] + timedelta(days=i + 1) for i in range(days)]
+
+        # Combine dates for plotting connection
+        pred_x = [history_dates[-1]] + pred_dates
+        pred_y = [values[-1]] + list(preds)
 
         # -----------------------------
         # Plotting
@@ -130,17 +139,14 @@ if st.button('Predict'):
         fig = go.Figure()
 
         # Manual history
-        history_x = list(range(len(values)))
-        history_y = values
         fig.add_trace(go.Scatter(
-            x=history_x,
-            y=history_y,
-            name='Manual history'
+            x=history_dates,
+            y=values,
+            name='Manual history',
+            line=dict(color='green')
         ))
 
-        # Predicted values (connected to last input)
-        pred_x = [history_x[-1]] + list(pred_index)
-        pred_y = [history_y[-1]] + list(preds_df['Predicted_Close'])
+        # Predicted values (connected)
         fig.add_trace(go.Scatter(
             x=pred_x,
             y=pred_y,
@@ -149,8 +155,16 @@ if st.button('Predict'):
             line=dict(color='red')
         ))
 
-        fig.update_layout(title='Manual Input — Predicted Close')
+        fig.update_layout(
+            title='Manual Input — Predicted Close',
+            xaxis_title='Date',
+            yaxis_title='Price ($)',
+            xaxis=dict(tickformat='%Y-%m-%d')
+        )
         st.plotly_chart(fig, use_container_width=True)
+
+        # Display predicted values in a DataFrame
+        preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_dates)
         st.dataframe(preds_df)
 
     except Exception as e:
