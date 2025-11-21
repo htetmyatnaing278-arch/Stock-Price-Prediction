@@ -74,10 +74,9 @@ def get_latest_aapl_price():
     try:
         ticker = yf.Ticker("AAPL")
         hist = ticker.history(period="1d")
-        price = hist['Close'].iloc[-1]
-        return float(price)
+        return float(hist['Close'].iloc[-1])
     except:
-        return None
+        return None   # silent failure
 
 # -----------------------------
 # Streamlit UI
@@ -89,19 +88,17 @@ model, scaler, window_size = load_saved_components()
 st.success(f'Model loaded successfully — window_size = {window_size}')
 
 # -----------------------------
-# Manual Input with Live Price
+# Manual Input (Clean Version)
 # -----------------------------
 st.subheader('Manual Input')
 
 latest_price = get_latest_aapl_price()
 
-if latest_price is not None:
-    st.info(f"Latest AAPL closing price fetched from Yahoo Finance: **${latest_price:.2f}**")
-else:
-    st.warning("Could not fetch live AAPL price. Using default values 155–180.")
-    latest_price = 170.0  # fallback
+# If live price fails, silently set a neutral middle value
+if latest_price is None:
+    latest_price = 170.0
 
-# Create realistic default values around the latest price
+# default prices around latest price
 default_values = [
     str(round(latest_price + random.uniform(-3, 3), 2))
     for _ in range(window_size)
