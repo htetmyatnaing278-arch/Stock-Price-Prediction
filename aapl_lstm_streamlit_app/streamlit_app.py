@@ -86,7 +86,8 @@ st.set_page_config(page_title='AAPL Close Price Predictor', layout='wide')
 st.title('AAPL Close Price — LSTM Predictor')
 
 model, scaler, window_size = load_saved_components()
-st.success(f'Model loaded successfully — window_size = {window_size}')
+window_size = 60  # Override for evaluation setup
+st.success(f'Model loaded successfully — using window_size = {window_size}')
 
 # -----------------------------
 # Manual Input
@@ -100,22 +101,20 @@ if latest_price is None:
 # Default prices around latest price
 default_values = [
     str(round(latest_price + random.uniform(-3, 3), 2))
-    for _ in range(window_size)
+    for _ in range(90)
 ]
 default_text = ','.join(default_values)
 
 manual_text = st.text_area(
-    f'Enter recent Close prices (comma-separated, minimum {window_size} values):',
+    'Enter 90 recent Close prices (comma-separated):',
     value=default_text
 )
-
-days = st.number_input('Days to predict', min_value=1, max_value=30, value=7)
 
 if st.button('Predict'):
     try:
         values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
         if len(values) < 90:
-            st.error("Please enter at least 90 values for proper evaluation (60 for input, 30 for comparison).")
+            st.error("Please enter at least 90 values (60 for input, 30 for comparison).")
             st.stop()
 
         input_series = pd.Series(values[:60])
@@ -134,7 +133,6 @@ if st.button('Predict'):
         # -----------------------------
         fig = go.Figure()
 
-        # Input history
         fig.add_trace(go.Scatter(
             x=input_dates,
             y=input_series,
@@ -142,7 +140,6 @@ if st.button('Predict'):
             line=dict(color='green')
         ))
 
-        # Actual future
         fig.add_trace(go.Scatter(
             x=future_dates,
             y=actual_future,
@@ -151,7 +148,6 @@ if st.button('Predict'):
             line=dict(color='blue')
         ))
 
-        # Predicted future
         fig.add_trace(go.Scatter(
             x=future_dates,
             y=preds,
@@ -178,5 +174,5 @@ if st.button('Predict'):
 
     except Exception as e:
         st.error(f'Input error: {e}')
-    
+
 st.markdown('---')
