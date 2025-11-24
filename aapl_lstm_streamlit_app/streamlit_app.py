@@ -54,9 +54,14 @@ def load_saved_components():
 # Helper function for predictions
 # -----------------------------
 def predict_next_days(model, scaler, recent_values, days, window_size):
-    # Use last 60 values to predict
-    recent_values = recent_values[:60]
-    scaled = scaler.transform(recent_values.values.reshape(-1, 1))
+    # recent_values should be at least window_size long, pad if needed
+    recent_vals = recent_values[:60].tolist()  # last 60 values
+    # pad with last value repeated to match window_size
+    if len(recent_vals) < window_size:
+        pad_len = window_size - len(recent_vals)
+        recent_vals = [recent_vals[0]] * pad_len + recent_vals
+
+    scaled = scaler.transform(np.array(recent_vals).reshape(-1,1))
     scaled_list = list(scaled.flatten())
 
     preds_scaled = []
