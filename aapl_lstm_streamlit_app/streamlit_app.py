@@ -93,13 +93,13 @@ st.success(f'Model loaded successfully — window_size = {window_size}')
 # -----------------------------
 st.subheader('Manual Input')
 
-latest_price = get_latest_aapl_price()
-if latest_price is None:
-    latest_price = 170.0
+start_date = st.date_input("Start date of the first Close price", datetime(2025, 1, 1))
 
-# Default prices around latest price
+latest_price = get_latest_aapl_price()
+
+# Default prices around latest price or fallback to random
 default_values = [
-    str(round(latest_price + random.uniform(-3, 3), 2))
+    str(round((latest_price if latest_price else random.uniform(160, 180)) + random.uniform(-3, 3), 2))
     for _ in range(window_size)
 ]
 default_text = ','.join(default_values)
@@ -114,7 +114,6 @@ days = st.number_input('Days to predict', min_value=1, max_value=30, value=7)
 if st.button('Predict'):
     try:
         values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
-
         if len(values) < window_size:
             repeats = (window_size // len(values)) + 1
             values = (values * repeats)[:window_size]
@@ -125,8 +124,7 @@ if st.button('Predict'):
         # -----------------------------
         # Create date index for x-axis
         # -----------------------------
-        start_date = datetime.today()
-        history_dates = [start_date - timedelta(days=window_size - i - 1) for i in range(len(values))]
+        history_dates = [start_date + timedelta(days=i) for i in range(len(values))]
         pred_dates = [history_dates[-1] + timedelta(days=i + 1) for i in range(days)]
 
         # Combine dates for plotting connection
@@ -138,7 +136,6 @@ if st.button('Predict'):
         # -----------------------------
         fig = go.Figure()
 
-        # Manual history
         fig.add_trace(go.Scatter(
             x=history_dates,
             y=values,
@@ -146,7 +143,6 @@ if st.button('Predict'):
             line=dict(color='green')
         ))
 
-        # Predicted values (connected)
         fig.add_trace(go.Scatter(
             x=pred_x,
             y=pred_y,
