@@ -67,17 +67,15 @@ def predict_next_days(model, scaler, recent_values, days, window_size):
     preds_scaled = np.array(preds_scaled).reshape(-1, 1)
     return scaler.inverse_transform(preds_scaled).flatten()
 
-# -----------------------------
-# Get Latest AAPL Price
-# -----------------------------
-@st.cache_resource
-def get_latest_aapl_price():
+@st.cache_data
+def fetch_aapl_close_prices(start_date, num_days):
     try:
-        ticker = yf.Ticker("AAPL")
-        hist = ticker.history(period="1d")
-        return float(hist['Close'].iloc[-1])
-    except:
-        return None
+        end_date = start_date + timedelta(days=num_days * 2)  # buffer for weekends/holidays
+        df = yf.download("AAPL", start=start_date, end=end_date)
+        closes = df['Close'].dropna().tolist()
+        return closes[:num_days]
+    except Exception:
+        return []
 
 # -----------------------------
 # Streamlit UI
@@ -94,22 +92,21 @@ st.success(f'Model loaded successfully — window_size = {window_size}')
 st.subheader('Manual Input')
 
 start_date = st.date_input("Start date of the first Close price", datetime(2025, 1, 1))
+days = st.number_input('Days to predict', min_value=1, max_value=30, value=7)
 
-latest_price = get_latest_aapl_price()
+# Fetch real close prices from start_date
+real_prices = fetch_aapl_close_prices(start_date, window_size)
+if len(real_prices) < window_size:
+    st.warning(f"Only {len(real_prices)} trading days found from {start_date}. Filling remaining with random values.")
+    while len(real_prices) < window_size:
+        real_prices.append(round(random.uniform(160, 180), 2))
 
-# Default prices around latest price or fallback to random
-default_values = [
-    str(round((latest_price if latest_price else random.uniform(160, 180)) + random.uniform(-3, 3), 2))
-    for _ in range(window_size)
-]
-default_text = ','.join(default_values)
+default_text = ','.join([str(round(p, 2)) for p in real_prices])
 
 manual_text = st.text_area(
     f'Enter recent Close prices (comma-separated, minimum {window_size} values):',
     value=default_text
 )
-
-days = st.number_input('Days to predict', min_value=1, max_value=30, value=7)
 
 if st.button('Predict'):
     try:
