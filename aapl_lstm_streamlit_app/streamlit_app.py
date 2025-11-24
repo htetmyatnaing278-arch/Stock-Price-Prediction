@@ -51,7 +51,7 @@ def load_saved_components():
     return model, scaler, window_size
 
 # -----------------------------
-# Prediction helper
+# Helper function for predictions
 # -----------------------------
 def predict_next_days(model, scaler, recent_values, days, window_size):
     scaled = scaler.transform(recent_values.values.reshape(-1, 1))
@@ -68,7 +68,7 @@ def predict_next_days(model, scaler, recent_values, days, window_size):
     return scaler.inverse_transform(preds_scaled).flatten()
 
 # -----------------------------
-# Get latest AAPL price
+# Get Latest AAPL Price
 # -----------------------------
 @st.cache_resource
 def get_latest_aapl_price():
@@ -106,8 +106,6 @@ days = st.number_input('Days to predict', min_value=1, max_value=30, value=7)
 if st.button('Predict'):
     try:
         values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
-        
-        # Ensure we have exactly window_size values
         if len(values) < window_size:
             repeats = (window_size // len(values)) + 1
             values = (values * repeats)[:window_size]
@@ -126,7 +124,8 @@ if st.button('Predict'):
         today = datetime.today()
         green_dates = [today - timedelta(days=90 - i) for i in range(60)]
         blue_dates = [today - timedelta(days=30 - i) for i in range(30)]
-        red_dates = [today + timedelta(days=i) for i in range(len(red_values))]
+        red_dates = [today - timedelta(days=30 - i) for i in range(30)] + \
+                    [today + timedelta(days=i) for i in range(days)]
 
         # -----------------------------
         # Plotting
@@ -150,7 +149,7 @@ if st.button('Predict'):
             x=red_dates,
             y=red_values,
             name=f'Predicted + Actual (30 + {days} days)',
-            line=dict(color='red', dash='dot'),
+            line=dict(color='red'),
             mode='lines+markers'
         ))
 
