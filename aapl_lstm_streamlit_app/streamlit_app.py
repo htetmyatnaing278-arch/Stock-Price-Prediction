@@ -113,70 +113,70 @@ days = st.number_input('Days to predict', min_value=1, max_value=30, value=7)
 
 if st.button('Predict'):
     try:
-    values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
-    if len(values) < 90:
-        st.error("Please enter at least 90 values for proper evaluation (60 for input, 30 for comparison).")
-        st.stop()
+        values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
+        if len(values) < 90:
+            st.error("Please enter at least 90 values for proper evaluation (60 for input, 30 for comparison).")
+            st.stop()
 
-    input_series = pd.Series(values[:60])
-    actual_future = values[60:90]
-    preds = predict_next_days(model, scaler, input_series, 30, window_size)
+        input_series = pd.Series(values[:60])
+        actual_future = values[60:90]
+        preds = predict_next_days(model, scaler, input_series, 30, window_size)
 
-    # -----------------------------
-    # Create date index for x-axis
-    # -----------------------------
-    start_date = datetime.today()
-    input_dates = [start_date - timedelta(days=59 - i) for i in range(60)]
-    future_dates = [input_dates[-1] + timedelta(days=i + 1) for i in range(30)]
+        # -----------------------------
+        # Create date index for x-axis
+        # -----------------------------
+        start_date = datetime.today()
+        input_dates = [start_date - timedelta(days=59 - i) for i in range(60)]
+        future_dates = [input_dates[-1] + timedelta(days=i + 1) for i in range(30)]
 
-    # -----------------------------
-    # Plotting
-    # -----------------------------
-    fig = go.Figure()
+        # -----------------------------
+        # Plotting
+        # -----------------------------
+        fig = go.Figure()
 
-    # Input history
-    fig.add_trace(go.Scatter(
-        x=input_dates,
-        y=input_series,
-        name='Input History (60)',
-        line=dict(color='green')
-    ))
+        # Input history
+        fig.add_trace(go.Scatter(
+            x=input_dates,
+            y=input_series,
+            name='Input History (60)',
+            line=dict(color='green')
+        ))
 
-    # Actual future
-    fig.add_trace(go.Scatter(
-        x=future_dates,
-        y=actual_future,
-        name='Actual Future (30)',
-        mode='lines+markers',
-        line=dict(color='blue')
-    ))
+        # Actual future
+        fig.add_trace(go.Scatter(
+            x=future_dates,
+            y=actual_future,
+            name='Actual Future (30)',
+            mode='lines+markers',
+            line=dict(color='blue')
+        ))
 
-    # Predicted future
-    fig.add_trace(go.Scatter(
-        x=future_dates,
-        y=preds,
-        name='Predicted Future (30)',
-        mode='lines+markers',
-        line=dict(color='red', dash='dash')
-    ))
+        # Predicted future
+        fig.add_trace(go.Scatter(
+            x=future_dates,
+            y=preds,
+            name='Predicted Future (30)',
+            mode='lines+markers',
+            line=dict(color='red', dash='dash')
+        ))
 
-    fig.update_layout(
-        title='60-Day Input + 30-Day Prediction vs Actual',
-        xaxis_title='Date',
-        yaxis_title='Price ($)',
-        xaxis=dict(tickformat='%Y-%m-%d')
-    )
-    st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(
+            title='60-Day Input + 30-Day Prediction vs Actual',
+            xaxis_title='Date',
+            yaxis_title='Price ($)',
+            xaxis=dict(tickformat='%Y-%m-%d')
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-    # Display comparison DataFrame
-    comparison_df = pd.DataFrame({
-        'Date': future_dates,
-        'Actual_Close': actual_future,
-        'Predicted_Close': preds
-    }).set_index('Date')
-    st.dataframe(comparison_df)
+        # Display comparison DataFrame
+        comparison_df = pd.DataFrame({
+            'Date': future_dates,
+            'Actual_Close': actual_future,
+            'Predicted_Close': preds
+        }).set_index('Date')
+        st.dataframe(comparison_df)
 
-except Exception as e:
-    st.error(f'Input error: {e}')
+    except Exception as e:
+        st.error(f'Input error: {e}')
     
 st.markdown('---')
