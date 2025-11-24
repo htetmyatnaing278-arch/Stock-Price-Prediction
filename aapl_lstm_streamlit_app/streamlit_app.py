@@ -73,10 +73,27 @@ def fetch_close_dataframe(ticker, start, end):
 def fetch_close_list(ticker, start_date, num_days):
     """Return list of close prices (num_days trading days) starting from start_date."""
     # Use an end date buffer to capture enough trading days
-    end_date = start_date + timedelta(days=num_days * 3)
-    df = fetch_close_dataframe(ticker, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
+    end_date = start_date + timedelta(days=num_days * 5)
+
+    df = yf.download(
+        ticker,
+        start=start_date.strftime("%Y-%m-%d"),
+        end=end_date.strftime("%Y-%m-%d"),
+        progress=False
+    )
+
+    # ---- FIX HERE: safely handle empty or missing columns ----
+    if df.empty:
+        return []
+
+    if 'Close' not in df.columns:
+        return []
+
     closes = df['Close'].dropna().tolist()
+
+    # Return first N trading-day closes
     return closes[:num_days]
+
 
 # -----------------------------
 # Helpers: prediction utilities
