@@ -51,34 +51,21 @@ def load_saved_components():
     return model, scaler, window_size
 
 # -----------------------------
-# Multi-step prediction (returns-based)
+# Helper functions
 # -----------------------------
 def predict_next_days(model, scaler, recent_values, days, window_size):
-    recent_prices = pd.Series(recent_values)
-    recent_returns = recent_prices.pct_change().dropna()
+    scaled = scaler.transform(recent_values.values.reshape(-1, 1))
+    scaled_list = list(scaled.flatten())
 
-    if len(recent_returns) < window_size:
-        st.warning(f"Need at least {window_size+1} prices to predict {window_size} returns.")
-        return np.array([])
-
-    last_actual_price = recent_prices.iloc[-1]
-    scaled_returns = scaler.transform(recent_returns.values.reshape(-1,1))
-    scaled_list = list(scaled_returns[-window_size:].flatten())
-
-    predicted_prices = []
-    current_price = last_actual_price
-
+    preds_scaled = []
     for _ in range(days):
         seq = np.array(scaled_list[-window_size:]).reshape(1, window_size, 1)
-        scaled_return_pred = model.predict(seq, verbose=0).flatten()[0]
-        scaled_list.append(scaled_return_pred)
+        p = model.predict(seq, verbose=0)
+        preds_scaled.append(p.flatten()[0])
+        scaled_list.append(p.flatten()[0])
 
-        predicted_return = scaler.inverse_transform(np.array([[scaled_return_pred]]))[0,0]
-        next_price = current_price * (1 + predicted_return)
-        predicted_prices.append(next_price)
-        current_price = next_price
-
-    return np.array(predicted_prices)
+    preds_scaled = np.array(preds_scaled).reshape(-1, 1)
+    return scaler.inverse_transform(preds_scaled).flatten()
 
 # -----------------------------
 # Get Latest AAPL Price
@@ -96,24 +83,29 @@ def get_latest_aapl_price():
 # Streamlit UI
 # -----------------------------
 st.set_page_config(page_title='AAPL Close Price Predictor', layout='wide')
-st.title('AAPL Close Price — LSTM Predictor (Returns Model)')
+st.title('AAPL Close Price — LSTM Predictor')
 
 model, scaler, window_size = load_saved_components()
-st.success(f'Model loaded successfully — window_size (W) = {window_size}')
+st.success(f'Model loaded successfully — window_size = {window_size}')
 
 # -----------------------------
 # Manual Input
 # -----------------------------
+st.subheader('Manual Input')
+
 latest_price = get_latest_aapl_price()
 if latest_price is None:
     latest_price = 170.0
 
-required_input_size = window_size + 1  # 91 for W=90
-default_values = [str(round(latest_price + random.uniform(-3,3),2)) for _ in range(required_input_size)]
+# Default prices around latest price
+default_values = [
+    str(round(latest_price + random.uniform(-3, 3), 2))
+    for _ in range(window_size)
+]
 default_text = ','.join(default_values)
 
 manual_text = st.text_area(
-    f'Enter recent Close prices (comma-separated, min {required_input_size} values):',
+    f'Enter recent Close prices (comma-separated, minimum {window_size} values):',
     value=default_text
 )
 
@@ -122,80 +114,60 @@ days = st.number_input('Days to predict', min_value=1, max_value=30, value=7)
 if st.button('Predict'):
     try:
         values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
-        if len(values) < required_input_size:
-            st.error(f"Input must contain at least {required_input_size} prices.")
-            st.stop()
 
-        recent_values = pd.Series(values[-required_input_size:])
-        full_history = recent_values.tolist()
+        if len(values) < window_size:
+            repeats = (window_size // len(values)) + 1
+            values = (values * repeats)[:window_size]
 
-        # -----------------------------
-        # 60 / 30 split
-        # -----------------------------
-        history_values = full_history[:60]  # Green
-        actual_values = full_history[60:90] # Blue
-
-        # Predict including 30 actual values + future days
-        predictions = predict_next_days(model, scaler, recent_values, days, window_size)
-        red_line_values = actual_values + predictions.tolist()
+        recent_values = pd.Series(values)
+        preds = predict_next_days(model, scaler, recent_values, days, window_size)
 
         # -----------------------------
-        # Create dates
+        # Create date index for x-axis
         # -----------------------------
-        today = datetime.today().date()
-        history_dates = [today - timedelta(days=90 - i) for i in range(60)]
-        actual_dates = [today - timedelta(days=30 - i) for i in range(30)]
-        pred_dates = [today + timedelta(days=i) for i in range(len(red_line_values))]
+        start_date = datetime.today()
+        history_dates = [start_date - timedelta(days=window_size - i - 1) for i in range(len(values))]
+        pred_dates = [history_dates[-1] + timedelta(days=i + 1) for i in range(days)]
+
+        # Combine dates for plotting connection
+        pred_x = [history_dates[-1]] + pred_dates
+        pred_y = [values[-1]] + list(preds)
 
         # -----------------------------
-        # Plot
+        # Plotting
         # -----------------------------
         fig = go.Figure()
 
+        # Manual history
         fig.add_trace(go.Scatter(
             x=history_dates,
-            y=history_values,
-            name='History (60 days)',
-            line=dict(color='green'),
-            mode='lines+markers'
+            y=values,
+            name='Manual history',
+            line=dict(color='green')
         ))
 
+        # Predicted values (connected)
         fig.add_trace(go.Scatter(
-            x=actual_dates,
-            y=actual_values,
-            name='Actual Prices (30 days)',
-            line=dict(color='blue'),
-            mode='lines+markers'
-        ))
-
-        fig.add_trace(go.Scatter(
-            x=pred_dates,
-            y=red_line_values,
-            name=f'Predicted + Actual Overlap ({len(red_line_values)} days)',
-            line=dict(color='red', dash='dot'),
-            mode='lines+markers'
+            x=pred_x,
+            y=pred_y,
+            name='Predicted',
+            mode='lines+markers',
+            line=dict(color='red')
         ))
 
         fig.update_layout(
-            title='AAPL Close Price Prediction (Comparison)',
+            title='Manual Input — Predicted Close',
             xaxis_title='Date',
             yaxis_title='Price ($)',
-            yaxis=dict(tickformat="$,.2f"),  # Show normal USD format: $170.25
             xaxis=dict(tickformat='%Y-%m-%d')
         )
-
         st.plotly_chart(fig, use_container_width=True)
 
-        # -----------------------------
-        # Display predicted values
-        # -----------------------------
-        preds_df = pd.DataFrame({'Predicted_Close ($)': red_line_values[30:]}, index=pred_dates[30:])
-        st.subheader(f'Forecasted Prices for the Next {len(predictions)} Days')
-        st.dataframe(preds_df.style.format("${:.2f}"))
+        # Display predicted values in a DataFrame
+        preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_dates)
+        st.dataframe(preds_df)
 
     except Exception as e:
-        st.error(f'An unexpected error occurred: {e}')
-        st.markdown("---")
-        st.caption("Ensure your model and scaler were trained on daily returns.")
+        st.error(f'Input error: {e}')
 
 st.markdown('---')
