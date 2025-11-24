@@ -156,7 +156,7 @@ if st.button('Predict'):
         if len(values) < required_input_size:
             st.error(f"Input must contain at least {required_input_size} prices to calculate {window_size} returns. Please check your input.")
             st.stop()
-        
+            
         # Use only the last required_input_size (W+1) values for prediction
         recent_values = pd.Series(values[-required_input_size:]) 
         
@@ -165,12 +165,14 @@ if st.button('Predict'):
         # -----------------------------
         full_history = recent_values.tolist() # The 91 values (W+1)
         
-        # Plotting split: Use the first 61 values as "History" and the last 30 as "Input Start Values" (91 total)
-        history_values = full_history[:-30] 
-        actual_values = full_history[-30:] 
+        # The split point: Only split the *input* history if total input is > days (e.g., 91 > 7)
+        # This keeps the logic consistent for visualization, where the *last* 'days' of input
+        # are highlighted as the immediate start for the forecast.
+        history_values = full_history[:-days]
+        actual_values = full_history[-days:]
         
-        # Generate the forecast
-        predictions = predict_next_days(model, scaler, recent_values, 30, window_size)
+        # Generate the forecast: USE THE SELECTED 'days' VALUE INSTEAD OF 30
+        predictions = predict_next_days(model, scaler, recent_values, days, window_size)
 
         # Create dates
         today = datetime.today().date()
@@ -178,7 +180,7 @@ if st.button('Predict'):
         
         # Dates for the "History" input values
         history_dates = [today - timedelta(days=total_input_days - i - 1) for i in range(len(history_values))]
-        # Dates for the "Input Start Values"
+        # Dates for the "Input Start Values" (last 'days' of input)
         actual_dates = [history_dates[-1] + timedelta(days=i + 1) for i in range(len(actual_values))]
         # Dates for the "Predicted" values (start where actual ends)
         pred_dates = [actual_dates[-1] + timedelta(days=i + 1) for i in range(len(predictions))]
@@ -188,7 +190,7 @@ if st.button('Predict'):
         # -----------------------------
         fig = go.Figure()
 
-        # 1️⃣ History (W+1 - 30 values)
+        # 1️⃣ History (Input values before the 'actual_values' window)
         fig.add_trace(go.Scatter(
             x=history_dates,
             y=history_values,
@@ -197,20 +199,20 @@ if st.button('Predict'):
             mode='lines+markers'
         ))
 
-        # 2️⃣ Actual (last 30 input values)
+        # 2️⃣ Actual (last 'days' input values for comparison)
         fig.add_trace(go.Scatter(
             x=actual_dates,
             y=actual_values,
-            name=f'Input Start Values ({len(actual_values)} days)',
+            name=f'Last {days} Input Values', # Dynamic name
             line=dict(color='blue'),
             mode='lines+markers'
         ))
 
-        # 3️⃣ Predicted (30-day forecast starting after the 91 input values)
+        # 3️⃣ Predicted (Only 'days' forecast)
         fig.add_trace(go.Scatter(
             x=pred_dates,
             y=predictions,
-            name='Predicted Forecast (30 days)',
+            name=f'Predicted Forecast ({days} days)', # Dynamic name
             line=dict(color='red', dash='dot'),
             mode='lines+markers'
         ))
