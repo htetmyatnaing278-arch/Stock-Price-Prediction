@@ -1,7 +1,7 @@
 # app.py
 import os
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import math
 
 import numpy as np
@@ -33,16 +33,14 @@ except Exception:
 MODEL_PATH = 'aapl_lstm_streamlit_app/lstm_aapl_model.h5'
 SCALER_PATH = 'aapl_lstm_streamlit_app/scaler.pkl'
 WINDOW_PATH = 'aapl_lstm_streamlit_app/window_size.txt'
-MANUAL_DEFAULT_START = datetime(2025, 1, 1)
-HISTORICAL_START = datetime(2020, 1, 1)  # for train/test example
-HISTORICAL_TICKER = "AAPL"
+TICKER = "AAPL"
+HISTORICAL_DEFAULT_START = datetime(2020, 1, 1).date()
 
 # -----------------------------
 # Helpers: load saved components
 # -----------------------------
 @st.cache_resource
 def load_saved_components(model_path=MODEL_PATH, scaler_path=SCALER_PATH, window_path=WINDOW_PATH):
-    # Validate existence
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found at: {model_path}")
     if not os.path.exists(scaler_path):
@@ -62,38 +60,31 @@ def load_saved_components(model_path=MODEL_PATH, scaler_path=SCALER_PATH, window
 # -----------------------------
 @st.cache_data
 def fetch_close_dataframe(ticker, start, end):
-    """Return DataFrame with DatetimeIndex and 'Close' column."""
-    df = yf.download(ticker, start=start, end=end)
-    if df.empty:
+    """
+    Return DataFrame with DatetimeIndex and 'Close' column.
+    start/end: strings 'YYYY-MM-DD' or date objects
+    """
+    df = yf.download(ticker, start=start, end=end, progress=False)
+    if df is None or df.empty or 'Close' not in df.columns:
         return pd.DataFrame()
     df = df[['Close']].dropna()
     return df
 
 @st.cache_data
-def fetch_close_list(ticker, start_date, num_days):
-    """Return list of close prices (num_days trading days) starting from start_date."""
-    # Use an end date buffer to capture enough trading days
-    end_date = start_date + timedelta(days=num_days * 5)
-
-    df = yf.download(
-        ticker,
-        start=start_date.strftime("%Y-%m-%d"),
-        end=end_date.strftime("%Y-%m-%d"),
-        progress=False
-    )
-
-    # ---- FIX HERE: safely handle empty or missing columns ----
+def fetch_recent_closes(ticker, lookback_days_buffer, required_count):
+    """
+    Fetch recent historical closes using a buffer in calendar days.
+    Returns the last `required_count` closes if available; otherwise returns [].
+    """
+    today = datetime.now().date()
+    start = today - timedelta(days=lookback_days_buffer)
+    df = fetch_close_dataframe(ticker, start.strftime("%Y-%m-%d"), (today + timedelta(days=1)).strftime("%Y-%m-%d"))
     if df.empty:
         return []
-
-    if 'Close' not in df.columns:
-        return []
-
     closes = df['Close'].dropna().tolist()
-
-    # Return first N trading-day closes
-    return closes[:num_days]
-
+    if len(closes) < required_count:
+        return []
+    return closes[-required_count:]
 
 # -----------------------------
 # Helpers: prediction utilities
@@ -134,7 +125,7 @@ def sliding_window_predictions_on_series(model, scaler, series, window_size):
         preds.append(float(p.flatten()[0]))
     preds = np.array(preds).reshape(-1, 1)
     preds_inv = scaler.inverse_transform(preds).flatten()
-    return preds_inv  # corresponds to predictions for windows starting at 0 -> predicts value at index window_size, window_size+1, ...
+    return preds_inv
 
 def compute_metrics(y_true, y_pred):
     mae = mean_absolute_error(y_true, y_pred)
@@ -144,8 +135,8 @@ def compute_metrics(y_true, y_pred):
 # -----------------------------
 # Streamlit UI / Layout
 # -----------------------------
-st.set_page_config(page_title='AAPL — LSTM Predictor (Rewritten)', layout='wide')
-st.title("AAPL Close Price — LSTM Predictor (Clean & Modular)")
+st.set_page_config(page_title='AAPL — LSTM Predictor (Full)', layout='wide')
+st.title("AAPL Close Price — LSTM Predictor (Full)")
 
 # Load model / scaler / window_size and handle errors gracefully
 try:
@@ -162,78 +153,142 @@ st.success(f"Loaded model and scaler — window_size = {window_size}")
 # Sidebar controls
 with st.sidebar:
     st.header("Controls")
-    days_to_predict = st.number_input("Days to predict (future)", min_value=1, max_value=30, value=7)
-    manual_start = st.date_input("Manual input start date (manual box) — fixed to 2025-01-01", MANUAL_DEFAULT_START)
-    use_auto_fill = st.checkbox("Auto-fill manual box using AAPL closes from 2025-01-01", value=True)
-    show_metrics = st.checkbox("Show historical test metrics (MAE & RMSE)", value=True)
-    # Historical section controls
+    # Mode: days or until-date or both
+    st.subheader("Prediction horizon mode")
+    mode_choice = st.radio("Choose horizon input mode:", ("Days (numeric)", "Until date", "Both (choose either)"))
+
+    days_input = st.number_input("Days to predict (if using Days mode)", min_value=1, max_value=800, value=7, step=1)
+
+    today = datetime.now().date()
+    default_until = today + timedelta(days=30)
+    until_date = st.date_input("Predict until date (if using Until date mode)", value=default_until, min_value=today + timedelta(days=1))
+
+    dec31_checkbox = st.checkbox("Quick: Predict until Dec 31, 2025", value=False)
+    if dec31_checkbox:
+        until_date = date(2025, 12, 31)
+
+    # Other toggles
     st.markdown("---")
-    st.subheader("Historical comparison setup")
-    hist_start = st.date_input("Historical data start (for train/test)", HISTORICAL_START)
-    hist_end = st.date_input("Historical data end (for train/test)", datetime.now().date())
-    hist_train_pct = st.slider("Train split (%)", min_value=50, max_value=90, value=80)
+    auto_fill = st.checkbox("Auto-fill manual input with latest closes (recommended)", value=True)
+    show_metrics = st.checkbox("Show historical test metrics (MAE & RMSE)", value=True)
+
+    st.markdown("---")
+    st.subheader("Historical evaluation")
+    hist_start = st.date_input("Historical start date", value=HISTORICAL_DEFAULT_START)
+    hist_end = st.date_input("Historical end date", value=today)
+    hist_train_pct = st.slider("Train split (%) for historical evaluation", min_value=50, max_value=90, value=80)
 
 # -----------------------------
-# Auto-fill manual input (starts at 2025-01-01)
+# Auto-fill manual input with last `window_size` trading-day closes (no fake defaults)
 # -----------------------------
-# Always attempt to grab window_size closes from MANUAL_DEFAULT_START
 manual_default_list = []
-if use_auto_fill:
-    manual_default_list = fetch_close_list(HISTORICAL_TICKER, MANUAL_DEFAULT_START, window_size)
-    if len(manual_default_list) < window_size:
-        # If not enough trading days found, pad with last known price or a reasonable default
-        if manual_default_list:
-            last_price = manual_default_list[-1]
-        else:
-            last_price = 170.0
-        while len(manual_default_list) < window_size:
-            manual_default_list.append(round(last_price, 2))
+if auto_fill:
+    # use a buffer of calendar days to ensure we capture enough trading days
+    lookback_buffer_days = max(60, window_size * 4)
+    manual_default_list = fetch_recent_closes(TICKER, lookback_buffer_days, window_size)
 
-manual_default_text = ','.join([str(round(x, 2)) for x in manual_default_list]) if manual_default_list else ','.join(['170.00'] * window_size)
+manual_default_text = ""
+if manual_default_list:
+    manual_default_text = ",".join([str(round(x, 2)) for x in manual_default_list])
 
 st.subheader("Manual Input (Recent Close Prices)")
+st.markdown(f"Provide the most recent close prices (comma-separated). Recommended length: **{window_size}** values.")
 manual_text = st.text_area(
-    label=f"Enter recent Close prices, comma-separated (minimum {window_size} values). Auto-filled from {MANUAL_DEFAULT_START.date()}.",
+    label="Manual prices (comma-separated):",
     value=manual_default_text,
     height=120
 )
 
+# Offer a quick 'fill from last X days' button
+col1, col2 = st.columns([1, 3])
+with col1:
+    if st.button("Refill from latest market data"):
+        lookback_buffer_days = max(120, window_size * 5)
+        manual_default_list = fetch_recent_closes(TICKER, lookback_buffer_days, window_size)
+        if not manual_default_list:
+            st.warning("Could not fetch enough recent closes to auto-fill. You can enter values manually.")
+        else:
+            # replace the text area using st.experimental_rerun pattern: write to session_state and rerun
+            st.session_state['_manual_default_text'] = ",".join([str(round(x, 2)) for x in manual_default_list])
+            st.experimental_rerun()
+with col2:
+    st.write("If auto-fill fails, enter real recent closes manually (most recent last).")
+
+# Allow session_state refill when button was used
+if '_manual_default_text' in st.session_state and st.session_state['_manual_default_text']:
+    manual_text = st.session_state['_manual_default_text']
+
+# -----------------------------
+# Determine final days_to_predict based on mode_choice / inputs
+# -----------------------------
+def compute_days_to_predict_from_inputs(mode, days_val, until_val):
+    today = datetime.now().date()
+    if mode == "Days (numeric)":
+        return int(days_val)
+    if mode == "Until date":
+        delta = (until_val - today).days
+        return max(1, delta)
+    # Both: user can provide either — prefer until_date if it's in the future and not default
+    if mode == "Both (choose either)":
+        # If until_val is in the future and > days_val then prefer until_val
+        delta = (until_val - today).days
+        if delta >= 1:
+            return max(1, delta)
+        return int(days_val)
+    return int(days_val)
+
+days_to_predict = compute_days_to_predict_from_inputs(mode_choice, days_input, until_date)
+
+# -----------------------------
 # Predict button
+# -----------------------------
 if st.button("Predict — Generate & Compare"):
     # Parse manual input
     try:
         values = [float(x.strip()) for x in manual_text.split(',') if x.strip() != ""]
-        if len(values) == 0:
-            st.error("No numeric values found in manual input.")
-            st.stop()
     except Exception as e:
         st.error(f"Couldn't parse manual input: {e}")
         st.stop()
 
-    # Ensure at least window_size values
-    if len(values) < window_size:
-        # repeat sequence to reach window_size (better than random)
-        repeats = (window_size // len(values)) + 1
-        values = (values * repeats)[:window_size]
-        st.info(f"Manual input extended to {window_size} values by repeating provided values.")
+    if len(values) == 0:
+        st.error("Manual input is empty. Please provide the most recent close prices or enable auto-fill and refill.")
+        st.stop()
 
+    # If user provided more or less than window_size, we'll use the most recent window_size values.
+    if len(values) < window_size:
+        st.error(f"Manual input needs at least {window_size} values (most recent last). Provide more data or use the refill button.")
+        st.stop()
+
+    # Keep only last window_size values as model expects sequence length = window_size
     recent_values = np.array(values[-window_size:]).astype(float)
 
     # 1) Predict next days from manual input
-    preds = predict_next_days(model, scaler, recent_values, days_to_predict, window_size)
+    try:
+        preds = predict_next_days(model, scaler, recent_values, days_to_predict, window_size)
+    except Exception as e:
+        st.error(f"Prediction failed: {e}")
+        st.stop()
 
     # Prepare date indices
-    history_dates = [manual_start + timedelta(days=i) for i in range(len(values))]
+    # Interpret manual input dates: we don't know exact trading dates the user used; assume last date is today
+    last_known_date = datetime.now().date()
+    # Build history_dates backwards from last_known_date
+    history_dates = []
+    # Place history_dates so that last element corresponds to last_known_date
+    for i in range(len(values[-window_size:]) - 1, -1, -1):
+        offset = len(values[-window_size:]) - 1 - i
+        history_dates.append(last_known_date - timedelta(days=offset))
+    # Now history_dates is ascending
+    history_dates = sorted(history_dates)
+
     pred_dates = [history_dates[-1] + timedelta(days=i + 1) for i in range(days_to_predict)]
-    pred_x = [history_dates[-1]] + pred_dates
-    pred_y = [values[-1]] + list(preds)
 
     # 2) Plot Manual History vs Predicted (comparison)
     fig_compare = go.Figure()
 
     fig_compare.add_trace(go.Scatter(
         x=history_dates,
-        y=values,
+        y=values[-window_size:],
         mode='lines',
         name='History (Manual Input)',
         line=dict(color='black', width=2)
@@ -249,7 +304,7 @@ if st.button("Predict — Generate & Compare"):
 
     fig_compare.update_layout(
         title={
-            'text': 'Manual History vs Predicted Future Close',
+            'text': f'Manual History vs Predicted Future Close — Next {days_to_predict} days',
             'y': 0.95, 'x': 0.5,
             'xanchor': 'center', 'yanchor': 'top'
         },
@@ -273,57 +328,55 @@ if st.button("Predict — Generate & Compare"):
     # -----------------------------
     st.subheader("Historical — Train/Test vs Predicted (Model evaluation)")
 
-    hist_df = fetch_close_dataframe(HISTORICAL_TICKER, hist_start.strftime("%Y-%m-%d"), (hist_end + timedelta(days=1)).strftime("%Y-%m-%d"))
+    hist_df = fetch_close_dataframe(TICKER, hist_start.strftime("%Y-%m-%d"), (hist_end + timedelta(days=1)).strftime("%Y-%m-%d"))
     if hist_df.empty or len(hist_df) < (window_size + 10):
         st.warning("Not enough historical data available for a meaningful train/test example. Try expanding the historical date range.")
     else:
-        # Build arrays for train/test split indices (based on percentage)
         total_len = len(hist_df)
         train_size = int(total_len * (hist_train_pct / 100.0))
 
-        # Get arrays
         close_arr = hist_df['Close'].values
 
-        # Predict across the entire series via sliding window
+        # sliding window predictions across the series
         preds_all = sliding_window_predictions_on_series(model, scaler, close_arr, window_size)
-        # preds_all[i] corresponds to prediction for index i+window_size in the original series
+        # preds_all[i] corresponds to prediction for original series index i+window_size
 
-        # Build aligned true/pred arrays for the predicted portion (we will compare on the test portion)
+        # Align true/pred arrays
         all_pred_index = hist_df.index[window_size:]
         all_true_values = hist_df['Close'].values[window_size:]
 
-        # Split into train/test aligned to indices
-        # train portion for plotting: use history up to train_size
-        train_index = hist_df.index[:train_size]
-        train_values = hist_df['Close'].values[:train_size]
-
-        # test_index starts at train_size -> but predictions start being available at window_size, so align properly
-        # We'll set test portion as indices from max(window_size, train_size) to end
+        # test start index for evaluation
         test_start_idx = max(window_size, train_size)
         test_index = hist_df.index[test_start_idx:]
         test_true = hist_df['Close'].values[test_start_idx:]
-        # Prediction indices aligned: need preds_all offset by (test_start_idx - window_size)
+
         pred_offset = test_start_idx - window_size
         pred_for_test = preds_all[pred_offset: pred_offset + len(test_true)]
 
-        # Compute metrics
-        if show_metrics:
+        if len(pred_for_test) != len(test_true):
+            # alignment problem; trim to shortest
+            min_len = min(len(pred_for_test), len(test_true))
+            pred_for_test = pred_for_test[:min_len]
+            test_true = test_true[:min_len]
+            test_index = test_index[:min_len]
+
+        if show_metrics and len(test_true) > 0:
             mae, rmse = compute_metrics(test_true, pred_for_test)
             st.markdown(f"**Test Metrics** — MAE: {mae:.4f} — RMSE: {rmse:.4f}")
 
-        # Build figure like your training/testing example
+        # Build training/testing style figure
         fig_hist = go.Figure()
 
         # Training trace (black)
         fig_hist.add_trace(go.Scatter(
-            x=train_index,
-            y=train_values,
+            x=hist_df.index[:train_size],
+            y=hist_df['Close'].values[:train_size],
             mode='lines',
             name='Training',
             line=dict(color='black', width=2)
         ))
 
-        # True test values (red) - we show from test_start_idx onward
+        # True test values (red)
         fig_hist.add_trace(go.Scatter(
             x=test_index,
             y=test_true,
@@ -332,7 +385,7 @@ if st.button("Predict — Generate & Compare"):
             line=dict(color='red', width=2)
         ))
 
-        # Predicted values (blue) aligned to test_index
+        # Predicted values (blue)
         fig_hist.add_trace(go.Scatter(
             x=test_index,
             y=pred_for_test,
@@ -357,7 +410,7 @@ if st.button("Predict — Generate & Compare"):
 
         st.plotly_chart(fig_hist, use_container_width=True)
 
-        # Optionally show a small table with first N comparisons
+        # Show small comparison table
         compare_show_n = min(30, len(test_true))
         compare_df = pd.DataFrame({
             'Date': pd.to_datetime(test_index[:compare_show_n]),
@@ -368,4 +421,7 @@ if st.button("Predict — Generate & Compare"):
         st.dataframe(compare_df)
 
 st.markdown("---")
-
+st.write("Notes:")
+st.write("- App expects your saved `lstm_aapl_model.h5`, `scaler.pkl`, and `window_size.txt` files at the top paths.")
+st.write("- Manual input must include real recent closes (most recent last). Auto-fill tries to get the last `window_size` trading closes.")
+st.write("- Prediction alignment assumes manual input's last item corresponds to today. If you have exact dates for historic values, replace history_dates construction accordingly.")
