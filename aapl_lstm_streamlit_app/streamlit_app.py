@@ -18,176 +18,156 @@ random.seed(random_seed)
 np.random.seed(random_seed)
 os.environ['PYTHONHASHSEED'] = str(random_seed)
 os.environ['TF_DETERMINISTIC_OPS'] = '1'
-tf.random.set_seed(random_seed)
+try:
+    tf.random.set_seed(random_seed)
+except Exception:
+    pass
 
 # -----------------------------
-# Load model, scaler, window size
+# Load model, scaler, and window size
 # -----------------------------
 @st.cache_resource
 def load_saved_components():
-    model_path = "aapl_lstm_streamlit_app/lstm_aapl_model.h5"
-    scaler_path = "aapl_lstm_streamlit_app/scaler.pkl"
-    window_path = "aapl_lstm_streamlit_app/window_size.txt"
+    model_path = 'aapl_lstm_streamlit_app/lstm_aapl_model.h5'
+    scaler_path = 'aapl_lstm_streamlit_app/scaler.pkl'
+    window_path = 'aapl_lstm_streamlit_app/window_size.txt'
 
     if not os.path.exists(model_path):
-        st.error("Model missing")
+        st.error(f"Model file not found at: {model_path}")
+        st.stop()
+    if not os.path.exists(scaler_path):
+        st.error(f"Scaler file not found at: {scaler_path}")
+        st.stop()
+    if not os.path.exists(window_path):
+        st.error(f"Window size file not found at: {window_path}")
         st.stop()
 
     model = load_model(model_path, compile=False)
     scaler = joblib.load(scaler_path)
 
-    with open(window_path) as f:
+    with open(window_path, 'r') as f:
         window_size = int(f.read().strip())
 
     return model, scaler, window_size
 
-
 # -----------------------------
-# Safe Close price fetcher
-# -----------------------------
-@st.cache_data
-def fetch_close_list(ticker, start_date, num_needed):
-    """
-    Fetch close price list safely (handles empty df or missing Close column)
-    """
-    end_date = start_date + timedelta(days=num_needed * 3)
-
-    df = yf.download(ticker, start=start_date, end=end_date)
-
-    if df is None or df.empty:
-        return []
-
-    # FIXED: Ensure Close column exists
-    close_col = None
-    for c in df.columns:
-        if "close" in c.lower():
-            close_col = c
-            break
-
-    if close_col is None:
-        return []
-
-    closes = df[close_col].dropna().tolist()
-
-    if len(closes) < num_needed:
-        return closes  # partial data
-
-    return closes[:num_needed]
-
-
-# -----------------------------
-# Prediction Function
+# Helper functions
 # -----------------------------
 def predict_next_days(model, scaler, recent_values, days, window_size):
-    scaled = scaler.transform(np.array(recent_values).reshape(-1, 1))
+    scaled = scaler.transform(recent_values.values.reshape(-1, 1))
     scaled_list = list(scaled.flatten())
 
     preds_scaled = []
     for _ in range(days):
         seq = np.array(scaled_list[-window_size:]).reshape(1, window_size, 1)
         p = model.predict(seq, verbose=0)
-        preds_scaled.append(p[0][0])
-        scaled_list.append(p[0][0])
+        preds_scaled.append(p.flatten()[0])
+        scaled_list.append(p.flatten()[0])
 
     preds_scaled = np.array(preds_scaled).reshape(-1, 1)
     return scaler.inverse_transform(preds_scaled).flatten()
 
+# -----------------------------
+# Get Latest AAPL Price
+# -----------------------------
+@st.cache_resource
+def get_latest_aapl_price():
+    try:
+        ticker = yf.Ticker("AAPL")
+        hist = ticker.history(period="1d")
+        return float(hist['Close'].iloc[-1])
+    except:
+        return None
 
 # -----------------------------
 # Streamlit UI
 # -----------------------------
-st.set_page_config(page_title="AAPL Predictor", layout="wide")
-st.title("AAPL LSTM Stock Close Price Predictor")
+st.set_page_config(page_title='AAPL Close Price Predictor', layout='wide')
+st.title('AAPL Close Price — LSTM Predictor')
 
 model, scaler, window_size = load_saved_components()
-st.success(f"Model Loaded — window_size = {window_size}")
+st.success(f'Model loaded successfully — window_size = {window_size}')
 
-# Manual Input Section
-st.subheader("Manual Input (Auto-filled from 2025-01-01)")
+# -----------------------------
+# Manual Input
+# -----------------------------
+st.subheader('Manual Input')
 
-START_DATE = datetime(2025, 1, 1)
-TICKER = "AAPL"
+latest_price = get_latest_aapl_price()
+if latest_price is None:
+    latest_price = 170.0
 
-# Fetch historical values
-history_list = fetch_close_list(TICKER, START_DATE, window_size)
-
-if len(history_list) < window_size:
-    st.warning(f"Could not fetch enough closes. Filling missing values.")
-    while len(history_list) < window_size:
-        history_list.append(round(random.uniform(160, 180), 2))
-
-# Default text for manual box
-default_text = ",".join([str(x) for x in history_list])
+# Default prices around latest price
+default_values = [
+    str(round(latest_price + random.uniform(-3, 3), 2))
+    for _ in range(window_size)
+]
+default_text = ','.join(default_values)
 
 manual_text = st.text_area(
-    f"Enter last {window_size} closing prices:",
-    value=default_text,
-    height=100
+    f'Enter recent Close prices (comma-separated, minimum {window_size} values):',
+    value=default_text
 )
 
-days = st.number_input("Days to predict", min_value=1, max_value=30, value=7)
+days = st.number_input('Days to predict', min_value=1, max_value=30, value=7)
 
-# -----------------------------
-# Predict Button
-# -----------------------------
-if st.button("Predict"):
+if st.button('Predict'):
     try:
-        values = [float(v.strip()) for v in manual_text.split(",")]
+        values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
 
         if len(values) < window_size:
-            st.error("Not enough values.")
-            st.stop()
+            repeats = (window_size // len(values)) + 1
+            values = (values * repeats)[:window_size]
 
-        values = values[-window_size:]  # ensure correct window
+        recent_values = pd.Series(values)
+        preds = predict_next_days(model, scaler, recent_values, days, window_size)
 
-        preds = predict_next_days(model, scaler, values, days, window_size)
-
-        # Create Dates
-        history_dates = [START_DATE + timedelta(days=i) for i in range(window_size)]
+        # -----------------------------
+        # Create date index for x-axis
+        # -----------------------------
+        start_date = datetime.today()
+        history_dates = [start_date - timedelta(days=window_size - i - 1) for i in range(len(values))]
         pred_dates = [history_dates[-1] + timedelta(days=i + 1) for i in range(days)]
 
-        # Combined for connecting line
+        # Combine dates for plotting connection
         pred_x = [history_dates[-1]] + pred_dates
         pred_y = [values[-1]] + list(preds)
 
         # -----------------------------
-        # Plot (TRAIN/TEST/PRED STYLE)
+        # Plotting
         # -----------------------------
         fig = go.Figure()
 
+        # Manual history
         fig.add_trace(go.Scatter(
             x=history_dates,
             y=values,
-            mode="lines",
-            name="History",
-            line=dict(color="black", width=2)
+            name='Manual history',
+            line=dict(color='green')
         ))
 
+        # Predicted values (connected)
         fig.add_trace(go.Scatter(
             x=pred_x,
             y=pred_y,
-            mode="lines+markers",
-            name="Predicted",
-            line=dict(color="blue", width=2)
+            name='Predicted',
+            mode='lines+markers',
+            line=dict(color='red')
         ))
 
         fig.update_layout(
-            title="AAPL Close Price — Manual Input Prediction",
-            xaxis_title="Date",
-            yaxis_title="Close Price ($)",
-            plot_bgcolor="lightyellow",
-            paper_bgcolor="lightyellow"
+            title='Manual Input — Predicted Close',
+            xaxis_title='Date',
+            yaxis_title='Price ($)',
+            xaxis=dict(tickformat='%Y-%m-%d')
         )
-
         st.plotly_chart(fig, use_container_width=True)
 
-        # Show prediction table
-        st.write("### Predicted Values")
-        df_pred = pd.DataFrame({"Predicted Close": preds}, index=pred_dates)
-        st.dataframe(df_pred)
+        # Display predicted values in a DataFrame
+        preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_dates)
+        st.dataframe(preds_df)
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f'Input error: {e}')
 
-
-st.markdown("---")
+st.markdown('---')
