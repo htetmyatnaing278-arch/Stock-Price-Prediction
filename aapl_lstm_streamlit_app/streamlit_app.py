@@ -51,17 +51,21 @@ def load_saved_components():
     return model, scaler, window_size
 
 # -----------------------------
-# Helper function for predictions
+# Prediction helper function
 # -----------------------------
 def predict_next_days(model, scaler, recent_values, days, window_size):
-    # recent_values should be at least window_size long, pad if needed
-    recent_vals = recent_values[:60].tolist()  # last 60 values
-    # pad with last value repeated to match window_size
-    if len(recent_vals) < window_size:
-        pad_len = window_size - len(recent_vals)
-        recent_vals = [recent_vals[0]] * pad_len + recent_vals
+    """
+    Predict next `days` prices using only the first 60 green values.
+    """
+    # Use only first 60 values as history
+    recent_values = recent_values[:60]
 
-    scaled = scaler.transform(np.array(recent_vals).reshape(-1,1))
+    # Pad if needed for window_size
+    if len(recent_values) < window_size:
+        pad_len = window_size - len(recent_values)
+        recent_values = [recent_values[0]] * pad_len + recent_values
+
+    scaled = scaler.transform(np.array(recent_values).reshape(-1, 1))
     scaled_list = list(scaled.flatten())
 
     preds_scaled = []
@@ -75,7 +79,7 @@ def predict_next_days(model, scaler, recent_values, days, window_size):
     return scaler.inverse_transform(preds_scaled).flatten()
 
 # -----------------------------
-# Get Latest AAPL Price
+# Get latest AAPL price
 # -----------------------------
 @st.cache_resource
 def get_latest_aapl_price():
@@ -97,37 +101,40 @@ st.success(f'Model loaded successfully — window_size = {window_size}')
 
 st.subheader('Manual Input')
 
+# Get latest price for default
 latest_price = get_latest_aapl_price()
 if latest_price is None:
     latest_price = 170.0
 
-# Default prices around latest price
+# Default values for manual input
 default_values = [str(round(latest_price + random.uniform(-3, 3), 2)) for _ in range(window_size)]
 manual_text = st.text_area(
     f'Enter {window_size} recent Close prices (comma-separated):',
     value=','.join(default_values)
 )
 
+# Days to predict
 days = st.number_input('Days to predict', min_value=1, max_value=30, value=7)
 
+# -----------------------------
+# Prediction and Plot
+# -----------------------------
 if st.button('Predict'):
     try:
+        # Parse manual input
         values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
         if len(values) < window_size:
             repeats = (window_size // len(values)) + 1
             values = (values * repeats)[:window_size]
+
         recent_values = pd.Series(values)
 
-        # -----------------------------
-        # Split: 60 green (history), 30 red (actual last 30)
-        # -----------------------------
+        # Split: green = first 60, red = last 30
         green_values = recent_values[:60].tolist()
-        red_values = recent_values[60:90].tolist()  # last 30 actual values
+        red_values = recent_values[60:90].tolist()  # actual last 30
 
-        # -----------------------------
-        # Predict based on 60 green values
-        # -----------------------------
-        predicted_values = predict_next_days(model, scaler, recent_values, days, window_size)
+        # Predict based only on green history
+        predicted_values = predict_next_days(model, scaler, recent_values, days=30, window_size=window_size)
 
         # -----------------------------
         # Create dates
@@ -135,7 +142,7 @@ if st.button('Predict'):
         today = datetime.today()
         green_dates = [today - timedelta(days=90 - i) for i in range(60)]
         red_dates = [today - timedelta(days=30 - i) for i in range(30)]
-        pred_dates = [today + timedelta(days=i) for i in range(days)]
+        pred_dates = red_dates  # align predictions with red values
 
         # -----------------------------
         # Plotting
@@ -158,7 +165,7 @@ if st.button('Predict'):
         fig.add_trace(go.Scatter(
             x=pred_dates,
             y=predicted_values,
-            name=f'Predicted (from 60 days)',
+            name='Predicted (from 60 days)',
             line=dict(color='skyblue'),
             mode='lines+markers'
         ))
@@ -172,11 +179,9 @@ if st.button('Predict'):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # -----------------------------
-        # Show predicted future prices
-        # -----------------------------
+        # Display predicted future prices
         preds_df = pd.DataFrame({'Predicted_Close ($)': predicted_values}, index=pred_dates)
-        st.subheader(f'Forecasted Prices for the Next {days} Days')
+        st.subheader('Predicted Prices for Next 30 Days')
         st.dataframe(preds_df.style.format("${:.2f}"))
 
     except Exception as e:
