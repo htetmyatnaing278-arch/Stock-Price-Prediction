@@ -113,51 +113,46 @@ manual_text = st.text_area(
 if st.button('Predict'):
     try:
         values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
-        if len(values) < 90:
-            st.error("Please enter at least 90 values (60 for input, 30 for comparison).")
+        if len(values) < 60:
+            st.error("Please enter at least 60 values (30 for actual, 30 for prediction input).")
             st.stop()
 
-        input_series = pd.Series(values[:60])
-        actual_future = values[60:90]
+        actual_future = values[:30]
+        input_series = pd.Series(values[30:60])
         preds = predict_next_days(model, scaler, input_series, 30, window_size)
 
         # -----------------------------
         # Create date index for x-axis
         # -----------------------------
         start_date = datetime.today()
-        input_dates = [start_date - timedelta(days=59 - i) for i in range(60)]
-        future_dates = [input_dates[-1] + timedelta(days=i + 1) for i in range(30)]
+        actual_dates = [start_date + timedelta(days=i + 1) for i in range(30)]
+        pred_dates = actual_dates  # same x-axis for comparison
 
         # -----------------------------
         # Plotting
         # -----------------------------
         fig = go.Figure()
 
+        # Actual future
         fig.add_trace(go.Scatter(
-            x=input_dates,
-            y=input_series,
-            name='Input History (60)',
-            line=dict(color='green')
-        ))
-
-        fig.add_trace(go.Scatter(
-            x=future_dates,
+            x=actual_dates,
             y=actual_future,
-            name='Actual Future (30)',
+            name='Actual (Last 30)',
             mode='lines+markers',
             line=dict(color='blue')
         ))
 
+        # Predicted future
         fig.add_trace(go.Scatter(
-            x=future_dates,
+            x=pred_dates,
             y=preds,
-            name='Predicted Future (30)',
+            name='Predicted (Next 30)',
             mode='lines+markers',
             line=dict(color='red', dash='dash')
         ))
 
         fig.update_layout(
-            title='60-Day Input + 30-Day Prediction vs Actual',
+            title='Actual vs Predicted — 30-Day Comparison',
             xaxis_title='Date',
             yaxis_title='Price ($)',
             xaxis=dict(tickformat='%Y-%m-%d')
@@ -166,7 +161,7 @@ if st.button('Predict'):
 
         # Display comparison DataFrame
         comparison_df = pd.DataFrame({
-            'Date': future_dates,
+            'Date': actual_dates,
             'Actual_Close': actual_future,
             'Predicted_Close': preds
         }).set_index('Date')
