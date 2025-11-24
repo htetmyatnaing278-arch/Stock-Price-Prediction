@@ -76,135 +76,81 @@ def predict_next_days(model, scaler, recent_values, days, window_size):
     preds_scaled = np.array(preds_scaled).reshape(-1, 1)
     return scaler.inverse_transform(preds_scaled).flatten()
 
-@st.cache_data(ttl=600) # Cache for 10 minutes
-def get_aapl_historical_data(window_size):
-    """
-    Fetches the necessary historical close price data for prediction.
-    We fetch 1.5 times the window_size to ensure we get enough days,
-    accounting for non-trading days (weekends/holidays).
-    """
-    ticker_symbol = "AAPL"
-    # Fetch enough data to cover the window size, plus some buffer
-    required_history_days = int(window_size * 1.5)
-    end_date = datetime.today()
-    start_date = end_date - timedelta(days=required_history_days)
-    
+# -----------------------------
+# Get Latest AAPL Price (Modified Fallback)
+# -----------------------------
+@st.cache_resource
+def get_latest_aapl_price():
     try:
-        # Download data
-        data = yf.download(ticker_symbol, start=start_date, end=end_date, progress=False)
-        
-        if data.empty:
-            st.warning("Yahoo Finance returned empty data for the specified period.")
-            return pd.Series(), "Data Unavailable"
-
-        # Extract the 'Close' prices and ensure we have at least 'window_size' data points
-        close_prices = data['Close'].tail(window_size)
-
-        if len(close_prices) < window_size:
-            st.warning(f"Only found {len(close_prices)} trading days in the history. Need {window_size} to predict.")
-            # Pad with the most recent price if necessary to meet the minimum length
-            if not close_prices.empty:
-                 last_price = close_prices.iloc[-1]
-                 padding = [last_price] * (window_size - len(close_prices))
-                 padded_prices = pd.concat([pd.Series(padding), close_prices], ignore_index=True)
-                 return padded_prices.iloc[-window_size:], "Padded Data"
-            else:
-                 return pd.Series(), "Data Unavailable"
-        
-        return close_prices, "Live Data"
-
-    except Exception as e:
-        st.error(f"Error fetching data from Yahoo Finance: {e}")
-        return pd.Series(), "API Error"
-
+        ticker = yf.Ticker("AAPL")
+        # Fetching a wider range just to be safe, though 1d should work
+        hist = ticker.history(period="5d")
+        if not hist.empty:
+            # Use the latest closing price
+            return float(hist['Close'].iloc[-1])
+        else:
+            # Fallback if history is empty
+            return 275.0 
+    except Exception:
+        # Fallback if API call fails (e.g., no internet, yfinance error)
+        return 275.0
 
 # -----------------------------
 # Streamlit UI
 # -----------------------------
 st.set_page_config(page_title='AAPL Close Price Predictor', layout='wide')
-st.title('AAPL Close Price — LSTM Predictor 📈')
+st.title('AAPL Close Price — LSTM Predictor')
 
 model, scaler, window_size = load_saved_components()
-st.success(f'Model loaded successfully — window_size (W) = {window_size}')
+st.success(f'Model loaded successfully — window_size = {window_size}')
 
 # -----------------------------
-# Data Source Selection
+# Manual Input
 # -----------------------------
-st.subheader('Data Input Source')
+st.subheader('Manual Input')
 
-# Fetch live historical data
-live_data_series, fetch_status = get_aapl_historical_data(window_size)
-live_data_values = live_data_series.tolist()
-live_data_text = ','.join([f"{x:.2f}" for x in live_data_values])
+# Get live price, or 275.0 as a modern fallback
+latest_price = get_latest_aapl_price() 
+st.info(f"Using a starting price of **${latest_price:.2f}** (Live/Fallback) to generate default input history.")
 
-data_source = st.radio(
-    "Choose Input Method:",
-    ('Use Live AAPL Data', 'Enter Custom Prices Manually'),
-    index=0 if fetch_status == "Live Data" else 1 # Default to live if successful
+# Default prices around latest price
+# Generates W values centered around the latest_price +/- 3
+default_values = [
+    str(round(latest_price + random.uniform(-3, 3), 2))
+    for _ in range(window_size)
+]
+default_text = ','.join(default_values)
+
+manual_text = st.text_area(
+    f'Enter recent Close prices (comma-separated, minimum {window_size} values):',
+    value=default_text
 )
-
-# -----------------------------
-# Manual Input or Live Data Display
-# -----------------------------
-if data_source == 'Enter Custom Prices Manually':
-    st.markdown("---")
-    latest_price = live_data_series.iloc[-1] if not live_data_series.empty else 275.0
-    st.info(f"The last price will be used as the starting point. Current market price estimate: **${latest_price:.2f}**")
-
-    # Generate default values centered around the latest known price
-    default_values = [
-        str(round(latest_price + random.uniform(-3, 3), 2))
-        for _ in range(window_size)
-    ]
-    default_text = ','.join(default_values)
-    
-    input_text = st.text_area(
-        f'Enter recent Close prices (comma-separated, minimum {window_size} values):',
-        value=default_text
-    )
-    
-else: # 'Use Live AAPL Data'
-    st.markdown("---")
-    st.success(f"Successfully loaded **{len(live_data_series)}** prices for the prediction window from Yahoo Finance. Status: {fetch_status}.")
-    st.caption("The sequence used for prediction is the last `window_size` prices.")
-    input_text = live_data_text # Use the fetched data as the input string
-
 
 days = st.number_input('Days to predict', min_value=1, max_value=30, value=7)
 
 if st.button('Predict'):
     try:
-        # Parse the input text (whether live or manual)
-        values = [float(x.strip()) for x in input_text.split(',') if x.strip()]
+        values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
 
         if len(values) < window_size:
-            st.error(f"Input must contain at least {window_size} prices. Please check the data source or your manual input.")
-            st.stop()
+            # Padding logic if input is too short (kept from original code)
+            st.warning(f"Input too short (only {len(values)} prices). Padding with repeats.")
+            repeats = (window_size // len(values)) + 1
+            values = (values * repeats)[:window_size]
 
-        # Use only the last window_size values for the model input
+        # Use only the last window_size values, as required by the model
         recent_values = pd.Series(values[-window_size:])
-        
-        # Generate prediction
         preds = predict_next_days(model, scaler, recent_values, days, window_size)
 
         # -----------------------------
         # Create date index for x-axis
         # -----------------------------
-        # Use the data that was actually fed to the model (the last W values)
-        input_plot_values = recent_values.tolist()
+        # The input data length for plotting should be the size of the final 'values' list (could be W or more)
+        input_plot_values = values # Use the potentially padded/trimmed values for plotting
         
-        # Calculate dates backward from today (or the last data point)
-        # If using live data, history_dates should reflect the actual trading days/dates
-        # For simplicity, we assume sequential days starting from the end of the data.
-        
-        # Determine the last date of the input data. We use the index if available, otherwise assume today - 1
-        if data_source == 'Use Live AAPL Data' and not live_data_series.index.empty:
-            last_input_date = live_data_series.index[-1].date()
-        else:
-            last_input_date = datetime.today().date() - timedelta(days=1)
-        
-        # Create dates for the input history (W days leading up to last_input_date)
-        history_dates = [last_input_date - timedelta(days=window_size - i - 1) for i in range(window_size)]
+        # Calculate dates backward from today (t=0)
+        start_date = datetime.today()
+        history_dates = [start_date - timedelta(days=len(input_plot_values) - i - 1) for i in range(len(input_plot_values))]
         
         # Prediction dates start after the last history date
         pred_dates = [history_dates[-1] + timedelta(days=i + 1) for i in range(days)]
@@ -218,26 +164,25 @@ if st.button('Predict'):
         # -----------------------------
         fig = go.Figure()
 
-        # Input History (Only the W values used for the model)
+        # Manual history
         fig.add_trace(go.Scatter(
             x=history_dates,
             y=input_plot_values,
-            name=f'Input History (W={window_size} prices)',
-            line=dict(color='blue'),
-            mode='lines+markers'
+            name='Input History',
+            line=dict(color='green')
         ))
 
         # Predicted values (connected)
         fig.add_trace(go.Scatter(
             x=pred_x,
             y=pred_y,
-            name=f'Predicted Forecast ({days} days)',
+            name=f'Predicted ({days} days)',
             mode='lines+markers',
-            line=dict(color='red', dash='dot')
+            line=dict(color='red')
         ))
 
         fig.update_layout(
-            title='AAPL Price Forecast using LSTM',
+            title='Manual Input — Predicted Close',
             xaxis_title='Date',
             yaxis_title='Price ($)',
             xaxis=dict(tickformat='%Y-%m-%d')
@@ -246,7 +191,7 @@ if st.button('Predict'):
 
         # Display predicted values in a DataFrame
         preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_dates)
-        st.subheader(f'Forecasted Prices for the Next {days} Days')
+        st.subheader(f'Forecast for the Next {days} Days')
         st.dataframe(preds_df.style.format("{:.2f}"))
 
     except Exception as e:
