@@ -116,59 +116,59 @@ if st.button('Predict'):
         # Convert input to float
         values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
 
-        # Ensure at least window_size values
         if len(values) < window_size:
             repeats = (window_size // len(values)) + 1
             values = (values * repeats)[:window_size]
 
         recent_values = pd.Series(values)
-        preds = predict_next_days(model, scaler, recent_values, days, window_size)
+        
+        # -----------------------------
+        # Split history for chart
+        # -----------------------------
+        history_values = values[:60]      # first 60 values as static history
+        actual_values = values[60:]       # last 30 values as actual close price
+        predictions = predict_next_days(model, scaler, recent_values, 30, window_size)
 
-        # -----------------------------
-        # Create date index
-        # -----------------------------
+        # Create dates
         start_date = datetime.today()
-        history_dates = [start_date - timedelta(days=window_size - i - 1) for i in range(len(values))]
-        pred_dates = [history_dates[-1] + timedelta(days=i + 1) for i in range(days)]
-
-        # For connected prediction line
-        pred_x = [history_dates[-1]] + pred_dates
-        pred_y = [values[-1]] + list(preds)
+        history_dates = [start_date - timedelta(days=window_size - i - 1) for i in range(60)]
+        actual_dates = [history_dates[-1] + timedelta(days=i+1) for i in range(30)]
+        pred_dates = actual_dates
 
         # -----------------------------
-        # Plotting three line charts
+        # Plotting
         # -----------------------------
         fig = go.Figure()
 
-        # 1️⃣ Manual history
+        # 1️⃣ History (first 60)
         fig.add_trace(go.Scatter(
             x=history_dates,
-            y=values,
-            name='Manual history',
+            y=history_values,
+            name='History (60)',
             line=dict(color='green'),
             mode='lines+markers'
         ))
 
-        # 2️⃣ Predicted values connected to last manual point
+        # 2️⃣ Actual (last 30)
         fig.add_trace(go.Scatter(
-            x=pred_x,
-            y=pred_y,
-            name='Predicted (connected)',
-            line=dict(color='red'),
+            x=actual_dates,
+            y=actual_values,
+            name='Actual (30)',
+            line=dict(color='blue'),
             mode='lines+markers'
         ))
 
-        # 3️⃣ Predicted values standalone
+        # 3️⃣ Predicted (30)
         fig.add_trace(go.Scatter(
             x=pred_dates,
-            y=preds,
-            name='Predicted (standalone)',
-            line=dict(color='blue', dash='dot'),
+            y=predictions,
+            name='Predicted (30)',
+            line=dict(color='red', dash='dot'),
             mode='lines+markers'
         ))
 
         fig.update_layout(
-            title='AAPL Close Price Prediction',
+            title='AAPL Close Price Prediction vs Actual',
             xaxis_title='Date',
             yaxis_title='Price ($)',
             xaxis=dict(tickformat='%Y-%m-%d')
@@ -176,13 +176,12 @@ if st.button('Predict'):
 
         st.plotly_chart(fig, use_container_width=True)
 
-        # -----------------------------
         # Display predicted values
-        # -----------------------------
-        preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_dates)
+        preds_df = pd.DataFrame({'Predicted_Close': predictions}, index=pred_dates)
         st.dataframe(preds_df)
 
     except Exception as e:
         st.error(f'Input error: {e}')
+
 
 st.markdown('---')
