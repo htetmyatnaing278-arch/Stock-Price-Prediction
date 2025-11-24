@@ -180,7 +180,7 @@ if st.button('Predict'):
             title='AAPL Close Price Prediction (Comparison)',
             xaxis_title='Date',
             yaxis_title='Price ($)',
-            yaxis=dict(tickformat="$,.2f"),  # USD format
+            yaxis=dict(tickformat="$,.2f"),  # Show normal USD format: $170.25
             xaxis=dict(tickformat='%Y-%m-%d')
         )
 
