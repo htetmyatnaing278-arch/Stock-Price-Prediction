@@ -142,7 +142,7 @@ if st.button('Predict'):
             x=blue_dates,
             y=blue_values,
             name='Actual (30 days)',
-            line=dict(color='orange'),
+            line=dict(color='red'),
             mode='lines+markers'
         ))
         fig.add_trace(go.Scatter(
