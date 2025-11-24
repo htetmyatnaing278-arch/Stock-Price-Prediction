@@ -27,28 +27,19 @@ except Exception:
 # Load model, scaler, and window size
 # -----------------------------
 @st.cache_resource
-def load_saved_components():
-    model_path = 'aapl_lstm_streamlit_app/lstm_aapl_model.h5'
-    scaler_path = 'aapl_lstm_streamlit_app/scaler.pkl'
-    window_path = 'aapl_lstm_streamlit_app/window_size.txt'
+def get_latest_aapl_price():
+    try:
+        ticker = yf.Ticker("AAPL")
+        # Use a 5‑day period to increase chance of data
+        hist = ticker.history(period="5d", interval="1d")
+        if hist.empty:
+            raise ValueError("Empty historical data from Yahoo Finance")
+        latest_close = float(hist['Close'].iloc[-1])
+        return latest_close
+    except Exception as e:
+        st.warning(f"Failed to fetch live AAPL price: {e}. Using fallback 275.0")
+        return 275.0
 
-    if not os.path.exists(model_path):
-        st.error(f"Model file not found at: {model_path}")
-        st.stop()
-    if not os.path.exists(scaler_path):
-        st.error(f"Scaler file not found at: {scaler_path}")
-        st.stop()
-    if not os.path.exists(window_path):
-        st.error(f"Window size file not found at: {window_path}")
-        st.stop()
-
-    model = load_model(model_path, compile=False)
-    scaler = joblib.load(scaler_path)
-
-    with open(window_path, 'r') as f:
-        window_size = int(f.read().strip())
-
-    return model, scaler, window_size
 
 # -----------------------------
 # Prediction helper function
