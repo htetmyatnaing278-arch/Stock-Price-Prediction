@@ -86,8 +86,7 @@ st.set_page_config(page_title='AAPL Close Price Predictor', layout='wide')
 st.title('AAPL Close Price — LSTM Predictor')
 
 model, scaler, window_size = load_saved_components()
-window_size = 60  # Override for evaluation setup
-st.success(f'Model loaded successfully — using window_size = {window_size}')
+st.success(f'Model loaded successfully — window_size = {window_size}')
 
 # -----------------------------
 # Manual Input
@@ -101,71 +100,72 @@ if latest_price is None:
 # Default prices around latest price
 default_values = [
     str(round(latest_price + random.uniform(-3, 3), 2))
-    for _ in range(90)
+    for _ in range(window_size)
 ]
 default_text = ','.join(default_values)
 
 manual_text = st.text_area(
-    'Enter 90 recent Close prices (comma-separated):',
+    f'Enter recent Close prices (comma-separated, minimum {window_size} values):',
     value=default_text
 )
+
+days = st.number_input('Days to predict', min_value=1, max_value=30, value=7)
 
 if st.button('Predict'):
     try:
         values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
-        if len(values) < 60:
-            st.error("Please enter at least 60 values (30 for actual, 30 for prediction input).")
-            st.stop()
 
-        actual_future = values[:30]
-        input_series = pd.Series(values[30:60])
-        preds = predict_next_days(model, scaler, input_series, 30, window_size)
+        if len(values) < window_size:
+            repeats = (window_size // len(values)) + 1
+            values = (values * repeats)[:window_size]
+
+        recent_values = pd.Series(values)
+        preds = predict_next_days(model, scaler, recent_values, days, window_size)
 
         # -----------------------------
         # Create date index for x-axis
         # -----------------------------
         start_date = datetime.today()
-        actual_dates = [start_date + timedelta(days=i + 1) for i in range(30)]
-        pred_dates = actual_dates  # same x-axis for comparison
+        history_dates = [start_date - timedelta(days=window_size - i - 1) for i in range(len(values))]
+        pred_dates = [history_dates[-1] + timedelta(days=i + 1) for i in range(days)]
+
+        # Combine dates for plotting connection
+        pred_x = [history_dates[-1]] + pred_dates
+        pred_y = [values[-1]] + list(preds)
 
         # -----------------------------
         # Plotting
         # -----------------------------
         fig = go.Figure()
 
-        # Actual future
+        # Manual history
         fig.add_trace(go.Scatter(
-            x=actual_dates,
-            y=actual_future,
-            name='Actual (Last 30)',
-            mode='lines+markers',
-            line=dict(color='blue')
+            x=history_dates,
+            y=values,
+            name='Manual history',
+            line=dict(color='green')
         ))
 
-        # Predicted future
+        # Predicted values (connected)
         fig.add_trace(go.Scatter(
-            x=pred_dates,
-            y=preds,
-            name='Predicted (Next 30)',
+            x=pred_x,
+            y=pred_y,
+            name='Predicted',
             mode='lines+markers',
-            line=dict(color='red', dash='dash')
+            line=dict(color='red')
         ))
 
         fig.update_layout(
-            title='Actual vs Predicted — 30-Day Comparison',
+            title='Manual Input — Predicted Close',
             xaxis_title='Date',
             yaxis_title='Price ($)',
             xaxis=dict(tickformat='%Y-%m-%d')
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # Display comparison DataFrame
-        comparison_df = pd.DataFrame({
-            'Date': actual_dates,
-            'Actual_Close': actual_future,
-            'Predicted_Close': preds
-        }).set_index('Date')
-        st.dataframe(comparison_df)
+        # Display predicted values in a DataFrame
+        preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_dates)
+        st.dataframe(preds_df)
 
     except Exception as e:
         st.error(f'Input error: {e}')
