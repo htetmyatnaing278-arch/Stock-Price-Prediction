@@ -1,3 +1,4 @@
+
 import os
 import random
 import numpy as np
@@ -54,13 +55,22 @@ def load_saved_components():
 # Helper functions
 # -----------------------------
 def predict_next_days(model, scaler, recent_values, days, window_size):
-    scaled = scaler.transform(recent_values.values.reshape(-1, 1))
+    """
+    Performs multi-step (recursive/open-loop) forecasting on a model trained on prices.
+    """
+    # Use only the last `window_size` values needed for the first prediction
+    recent_values_slice = recent_values.tail(window_size)
+    
+    scaled = scaler.transform(recent_values_slice.values.reshape(-1, 1))
     scaled_list = list(scaled.flatten())
 
     preds_scaled = []
     for _ in range(days):
+        # The sequence for prediction is always the last 'window_size' values in the scaled_list
         seq = np.array(scaled_list[-window_size:]).reshape(1, window_size, 1)
         p = model.predict(seq, verbose=0)
+        
+        # Append the PREDICTED scaled value to the sequence list for the next iteration
         preds_scaled.append(p.flatten()[0])
         scaled_list.append(p.flatten()[0])
 
@@ -68,16 +78,23 @@ def predict_next_days(model, scaler, recent_values, days, window_size):
     return scaler.inverse_transform(preds_scaled).flatten()
 
 # -----------------------------
-# Get Latest AAPL Price
+# Get Latest AAPL Price (Modified Fallback)
 # -----------------------------
 @st.cache_resource
 def get_latest_aapl_price():
     try:
         ticker = yf.Ticker("AAPL")
-        hist = ticker.history(period="1d")
-        return float(hist['Close'].iloc[-1])
-    except:
-        return None
+        # Fetching a wider range just to be safe, though 1d should work
+        hist = ticker.history(period="5d")
+        if not hist.empty:
+            # Use the latest closing price
+            return float(hist['Close'].iloc[-1])
+        else:
+            # Fallback if history is empty
+            return 275.0 
+    except Exception:
+        # Fallback if API call fails (e.g., no internet, yfinance error)
+        return 275.0
 
 # -----------------------------
 # Streamlit UI
@@ -93,11 +110,12 @@ st.success(f'Model loaded successfully — window_size = {window_size}')
 # -----------------------------
 st.subheader('Manual Input')
 
-latest_price = get_latest_aapl_price()
-if latest_price is None:
-    latest_price = 170.0
+# Get live price, or 275.0 as a modern fallback
+latest_price = get_latest_aapl_price() 
+st.info(f"Using a starting price of **${latest_price:.2f}** (Live/Fallback) to generate default input history.")
 
 # Default prices around latest price
+# Generates W values centered around the latest_price +/- 3
 default_values = [
     str(round(latest_price + random.uniform(-3, 3), 2))
     for _ in range(window_size)
@@ -116,22 +134,31 @@ if st.button('Predict'):
         values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
 
         if len(values) < window_size:
+            # Padding logic if input is too short (kept from original code)
+            st.warning(f"Input too short (only {len(values)} prices). Padding with repeats.")
             repeats = (window_size // len(values)) + 1
             values = (values * repeats)[:window_size]
 
-        recent_values = pd.Series(values)
+        # Use only the last window_size values, as required by the model
+        recent_values = pd.Series(values[-window_size:])
         preds = predict_next_days(model, scaler, recent_values, days, window_size)
 
         # -----------------------------
         # Create date index for x-axis
         # -----------------------------
+        # The input data length for plotting should be the size of the final 'values' list (could be W or more)
+        input_plot_values = values # Use the potentially padded/trimmed values for plotting
+        
+        # Calculate dates backward from today (t=0)
         start_date = datetime.today()
-        history_dates = [start_date - timedelta(days=window_size - i - 1) for i in range(len(values))]
+        history_dates = [start_date - timedelta(days=len(input_plot_values) - i - 1) for i in range(len(input_plot_values))]
+        
+        # Prediction dates start after the last history date
         pred_dates = [history_dates[-1] + timedelta(days=i + 1) for i in range(days)]
 
-        # Combine dates for plotting connection
+        # Combine dates for plotting connection (last input value to first prediction)
         pred_x = [history_dates[-1]] + pred_dates
-        pred_y = [values[-1]] + list(preds)
+        pred_y = [input_plot_values[-1]] + list(preds)
 
         # -----------------------------
         # Plotting
@@ -141,8 +168,8 @@ if st.button('Predict'):
         # Manual history
         fig.add_trace(go.Scatter(
             x=history_dates,
-            y=values,
-            name='Manual history',
+            y=input_plot_values,
+            name='Input History',
             line=dict(color='green')
         ))
 
@@ -150,7 +177,7 @@ if st.button('Predict'):
         fig.add_trace(go.Scatter(
             x=pred_x,
             y=pred_y,
-            name='Predicted',
+            name=f'Predicted ({days} days)',
             mode='lines+markers',
             line=dict(color='red')
         ))
@@ -165,9 +192,11 @@ if st.button('Predict'):
 
         # Display predicted values in a DataFrame
         preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_dates)
-        st.dataframe(preds_df)
+        st.subheader(f'Forecast for the Next {days} Days')
+        st.dataframe(preds_df.style.format("{:.2f}"))
 
     except Exception as e:
-        st.error(f'Input error: {e}')
+        # Catch any unexpected errors during prediction or plotting
+        st.error(f'An unexpected error occurred during prediction: {e}')
 
 st.markdown('---')
