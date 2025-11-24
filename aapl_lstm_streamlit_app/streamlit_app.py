@@ -54,6 +54,8 @@ def load_saved_components():
 # Helper function for predictions
 # -----------------------------
 def predict_next_days(model, scaler, recent_values, days, window_size):
+    # Use last 60 values to predict
+    recent_values = recent_values[:60]
     scaled = scaler.transform(recent_values.values.reshape(-1, 1))
     scaled_list = list(scaled.flatten())
 
@@ -112,20 +114,23 @@ if st.button('Predict'):
         recent_values = pd.Series(values)
 
         # -----------------------------
-        # Split: 60 green, 30 blue
+        # Split: 60 green (history), 30 red (actual last 30)
         # -----------------------------
         green_values = recent_values[:60].tolist()
-        blue_values = recent_values[60:90].tolist()  # last 30
-        red_values = blue_values + predict_next_days(model, scaler, recent_values, days, window_size).tolist()
+        red_values = recent_values[60:90].tolist()  # last 30 actual values
+
+        # -----------------------------
+        # Predict based on 60 green values
+        # -----------------------------
+        predicted_values = predict_next_days(model, scaler, recent_values, days, window_size)
 
         # -----------------------------
         # Create dates
         # -----------------------------
         today = datetime.today()
         green_dates = [today - timedelta(days=90 - i) for i in range(60)]
-        blue_dates = [today - timedelta(days=30 - i) for i in range(30)]
-        red_dates = [today - timedelta(days=30 - i) for i in range(30)] + \
-                    [today + timedelta(days=i) for i in range(days)]
+        red_dates = [today - timedelta(days=30 - i) for i in range(30)]
+        pred_dates = [today + timedelta(days=i) for i in range(days)]
 
         # -----------------------------
         # Plotting
@@ -139,16 +144,16 @@ if st.button('Predict'):
             mode='lines+markers'
         ))
         fig.add_trace(go.Scatter(
-            x=blue_dates,
-            y=blue_values,
-            name='Actual (30 days)',
+            x=red_dates,
+            y=red_values,
+            name='Actual last 30 days',
             line=dict(color='red'),
             mode='lines+markers'
         ))
         fig.add_trace(go.Scatter(
-            x=red_dates,
-            y=red_values,
-            name=f'Predicted + Actual (30 + {days} days)',
+            x=pred_dates,
+            y=predicted_values,
+            name=f'Predicted (from 60 days)',
             line=dict(color='skyblue'),
             mode='lines+markers'
         ))
@@ -165,7 +170,7 @@ if st.button('Predict'):
         # -----------------------------
         # Show predicted future prices
         # -----------------------------
-        preds_df = pd.DataFrame({'Predicted_Close ($)': red_values[30:]}, index=red_dates[30:])
+        preds_df = pd.DataFrame({'Predicted_Close ($)': predicted_values}, index=pred_dates)
         st.subheader(f'Forecasted Prices for the Next {days} Days')
         st.dataframe(preds_df.style.format("${:.2f}"))
 
