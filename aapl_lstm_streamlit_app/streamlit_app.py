@@ -42,7 +42,6 @@ def load_saved_components():
         st.error(f"Window size file not found at: {window_path}")
         st.stop()
 
-    # Note: compile=False is used because Streamlit reloads the model frequently
     model = load_model(model_path, compile=False)
     scaler = joblib.load(scaler_path)
 
@@ -52,52 +51,32 @@ def load_saved_components():
     return model, scaler, window_size
 
 # -----------------------------
-# Helper function: Multi-step prediction for RETURNS (CORRECTED LOGIC)
+# Multi-step prediction (returns-based)
 # -----------------------------
 def predict_next_days(model, scaler, recent_values, days, window_size):
-    """
-    Performs multi-step (recursive/open-loop) forecasting on a model trained on RETURNS.
-    It predicts scaled returns and iteratively converts them back to absolute prices.
-    This requires window_size + 1 prices for the initial return calculation.
-    """
     recent_prices = pd.Series(recent_values)
-    
-    # 1. Convert recent prices to daily returns
-    # This will now produce 90 returns if recent_values has 91 prices
-    recent_returns = recent_prices.pct_change().dropna() 
-    
+    recent_returns = recent_prices.pct_change().dropna()
+
     if len(recent_returns) < window_size:
-        st.warning("Insufficient return data to form a sequence. Need W+1 prices to get W returns.")
+        st.warning(f"Need at least {window_size+1} prices to predict {window_size} returns.")
         return np.array([])
 
-    # 2. Get the last known actual price (P_{t-1})
-    last_actual_price = recent_prices.iloc[-1] 
-    
-    # 3. Transform the necessary returns (last window_size)
-    scaled_returns = scaler.transform(recent_returns.values.reshape(-1, 1))
-    scaled_list = list(scaled_returns[-window_size:].flatten()) # Initial sequence
+    last_actual_price = recent_prices.iloc[-1]
+    scaled_returns = scaler.transform(recent_returns.values.reshape(-1,1))
+    scaled_list = list(scaled_returns[-window_size:].flatten())
 
     predicted_prices = []
-    current_price = last_actual_price # Price for P_{t-1}
+    current_price = last_actual_price
 
-    # 4. Recursive Forecasting Loop
     for _ in range(days):
-        # a. Create sequence and predict the next scaled return
         seq = np.array(scaled_list[-window_size:]).reshape(1, window_size, 1)
         scaled_return_pred = model.predict(seq, verbose=0).flatten()[0]
-        
-        # b. Append the PREDICTED scaled return to the sequence list for the next iteration (compounding error)
-        scaled_list.append(scaled_return_pred) 
-        
-        # c. Inverse transform the single predicted scaled return
-        predicted_return = scaler.inverse_transform(np.array([[scaled_return_pred]]))[0, 0]
-        
-        # d. Convert the predicted return back to the absolute price: P_t = P_{t-1} * (1 + return)
+        scaled_list.append(scaled_return_pred)
+
+        predicted_return = scaler.inverse_transform(np.array([[scaled_return_pred]]))[0,0]
         next_price = current_price * (1 + predicted_return)
-        
-        # e. Update the price and results list
         predicted_prices.append(next_price)
-        current_price = next_price # The new P_{t-1} for the next day's prediction
+        current_price = next_price
 
     return np.array(predicted_prices)
 
@@ -123,26 +102,18 @@ model, scaler, window_size = load_saved_components()
 st.success(f'Model loaded successfully — window_size (W) = {window_size}')
 
 # -----------------------------
-# Manual Input (Adjusted to require W+1 prices)
+# Manual Input
 # -----------------------------
-st.subheader('Manual Input')
-
 latest_price = get_latest_aapl_price()
 if latest_price is None:
     latest_price = 170.0
 
-# REQUIRED INPUT SIZE: W + 1 prices to generate W returns
-required_input_size = window_size + 1 
-
-# Default prices around latest price
-default_values = [
-    str(round(latest_price + random.uniform(-3, 3), 2))
-    for _ in range(required_input_size) 
-]
+required_input_size = window_size + 1  # 91 for W=90
+default_values = [str(round(latest_price + random.uniform(-3,3),2)) for _ in range(required_input_size)]
 default_text = ','.join(default_values)
 
 manual_text = st.text_area(
-    f'Enter recent Close prices (comma-separated, minimum {required_input_size} values for {window_size} returns):',
+    f'Enter recent Close prices (comma-separated, min {required_input_size} values):',
     value=default_text
 )
 
@@ -150,75 +121,63 @@ days = st.number_input('Days to predict', min_value=1, max_value=30, value=7)
 
 if st.button('Predict'):
     try:
-        # Convert input to float
         values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
-
         if len(values) < required_input_size:
-            st.error(f"Input must contain at least {required_input_size} prices to calculate {window_size} returns. Please check your input.")
+            st.error(f"Input must contain at least {required_input_size} prices.")
             st.stop()
-            
-        # Use only the last required_input_size (W+1) values for prediction
-        recent_values = pd.Series(values[-required_input_size:]) 
-        
+
+        recent_values = pd.Series(values[-required_input_size:])
+        full_history = recent_values.tolist()
+
         # -----------------------------
-        # Split history for chart (Using the 91 input values)
+        # 60 / 30 split
         # -----------------------------
-        full_history = recent_values.tolist() # The 91 values (W+1)
-        
-        # The split point: Only split the *input* history if total input is > days (e.g., 91 > 7)
-        # This keeps the logic consistent for visualization, where the *last* 'days' of input
-        # are highlighted as the immediate start for the forecast.
-        history_values = full_history[:-days]
-        actual_values = full_history[-days:]
-        
-        # Generate the forecast: USE THE SELECTED 'days' VALUE INSTEAD OF 30
+        history_values = full_history[:60]  # Green
+        actual_values = full_history[60:90] # Blue
+
+        # Predict including 30 actual values + future days
         predictions = predict_next_days(model, scaler, recent_values, days, window_size)
-
-        # Create dates
-        today = datetime.today().date()
-        total_input_days = len(full_history) # 91 days
-        
-        # Dates for the "History" input values
-        history_dates = [today - timedelta(days=total_input_days - i - 1) for i in range(len(history_values))]
-        # Dates for the "Input Start Values" (last 'days' of input)
-        actual_dates = [history_dates[-1] + timedelta(days=i + 1) for i in range(len(actual_values))]
-        # Dates for the "Predicted" values (start where actual ends)
-        pred_dates = [actual_dates[-1] + timedelta(days=i + 1) for i in range(len(predictions))]
+        red_line_values = actual_values + predictions.tolist()
 
         # -----------------------------
-        # Plotting
+        # Create dates
+        # -----------------------------
+        today = datetime.today().date()
+        history_dates = [today - timedelta(days=90 - i) for i in range(60)]
+        actual_dates = [today - timedelta(days=30 - i) for i in range(30)]
+        pred_dates = [today + timedelta(days=i) for i in range(len(red_line_values))]
+
+        # -----------------------------
+        # Plot
         # -----------------------------
         fig = go.Figure()
 
-        # 1️⃣ History (Input values before the 'actual_values' window)
         fig.add_trace(go.Scatter(
             x=history_dates,
             y=history_values,
-            name=f'Input History ({len(history_values)} days)',
+            name='History (60 days)',
             line=dict(color='green'),
             mode='lines+markers'
         ))
 
-        # 2️⃣ Actual (last 'days' input values for comparison)
         fig.add_trace(go.Scatter(
             x=actual_dates,
             y=actual_values,
-            name=f'Last {days} Input Values', # Dynamic name
+            name='Actual Prices (30 days)',
             line=dict(color='blue'),
             mode='lines+markers'
         ))
 
-        # 3️⃣ Predicted (Only 'days' forecast)
         fig.add_trace(go.Scatter(
             x=pred_dates,
-            y=predictions,
-            name=f'Predicted Forecast ({days} days)', # Dynamic name
+            y=red_line_values,
+            name=f'Predicted + Actual Overlap ({len(red_line_values)} days)',
             line=dict(color='red', dash='dot'),
             mode='lines+markers'
         ))
 
         fig.update_layout(
-            title='AAPL Close Price Prediction (Multi-Step Forecast)',
+            title='AAPL Close Price Prediction (Comparison)',
             xaxis_title='Date',
             yaxis_title='Price ($)',
             xaxis=dict(tickformat='%Y-%m-%d')
@@ -226,15 +185,16 @@ if st.button('Predict'):
 
         st.plotly_chart(fig, use_container_width=True)
 
+        # -----------------------------
         # Display predicted values
-        preds_df = pd.DataFrame({'Predicted_Close': predictions}, index=pred_dates)
+        # -----------------------------
+        preds_df = pd.DataFrame({'Predicted_Close': red_line_values[30:]}, index=pred_dates[30:])
         st.subheader(f'Forecasted Prices for the Next {len(predictions)} Days')
         st.dataframe(preds_df.style.format("{:.2f}"))
 
     except Exception as e:
-        # Catch any unexpected errors during prediction or plotting
-        st.error(f'An unexpected error occurred during prediction: {e}')
+        st.error(f'An unexpected error occurred: {e}')
         st.markdown("---")
-        st.caption("If the error persists, ensure your saved model and scaler were trained on daily returns.")
+        st.caption("Ensure your model and scaler were trained on daily returns.")
 
 st.markdown('---')
