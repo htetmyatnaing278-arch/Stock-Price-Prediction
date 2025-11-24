@@ -180,6 +180,7 @@ if st.button('Predict'):
             title='AAPL Close Price Prediction (Comparison)',
             xaxis_title='Date',
             yaxis_title='Price ($)',
+            yaxis=dict(tickformat="$,.2f"),  # USD format
             xaxis=dict(tickformat='%Y-%m-%d')
         )
 
@@ -188,9 +189,9 @@ if st.button('Predict'):
         # -----------------------------
         # Display predicted values
         # -----------------------------
-        preds_df = pd.DataFrame({'Predicted_Close': red_line_values[30:]}, index=pred_dates[30:])
+        preds_df = pd.DataFrame({'Predicted_Close ($)': red_line_values[30:]}, index=pred_dates[30:])
         st.subheader(f'Forecasted Prices for the Next {len(predictions)} Days')
-        st.dataframe(preds_df.style.format("{:.2f}"))
+        st.dataframe(preds_df.style.format("${:.2f}"))
 
     except Exception as e:
         st.error(f'An unexpected error occurred: {e}')
