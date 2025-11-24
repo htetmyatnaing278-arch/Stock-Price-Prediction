@@ -138,30 +138,41 @@ if st.button('Predict'):
         # -----------------------------
         fig = go.Figure()
 
-        # Manual history
-        fig.add_trace(go.Scatter(
-            x=history_dates,
-            y=values,
-            name='Manual history',
-            line=dict(color='green')
-        ))
+# 1️⃣ Manual history
+fig.add_trace(go.Scatter(
+    x=history_dates,
+    y=values,
+    name='Manual history',
+    line=dict(color='green'),
+    mode='lines+markers'
+))
 
-        # Predicted values (connected)
-        fig.add_trace(go.Scatter(
-            x=pred_x,
-            y=pred_y,
-            name='Predicted',
-            mode='lines+markers',
-            line=dict(color='red')
-        ))
+# 2️⃣ Predicted values connected to last manual point
+fig.add_trace(go.Scatter(
+    x=pred_x,
+    y=pred_y,
+    name='Predicted (connected)',
+    line=dict(color='red'),
+    mode='lines+markers'
+))
 
-        fig.update_layout(
-            title='Manual Input — Predicted Close',
-            xaxis_title='Date',
-            yaxis_title='Price ($)',
-            xaxis=dict(tickformat='%Y-%m-%d')
-        )
-        st.plotly_chart(fig, use_container_width=True)
+# 3️⃣ Predicted values standalone
+fig.add_trace(go.Scatter(
+    x=pred_dates,
+    y=preds,
+    name='Predicted (standalone)',
+    line=dict(color='blue', dash='dot'),
+    mode='lines+markers'
+))
+
+fig.update_layout(
+    title='AAPL Close Price Prediction',
+    xaxis_title='Date',
+    yaxis_title='Price ($)',
+    xaxis=dict(tickformat='%Y-%m-%d')
+)
+
+st.plotly_chart(fig, use_container_width=True)
 
         # Display predicted values in a DataFrame
         preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_dates)
