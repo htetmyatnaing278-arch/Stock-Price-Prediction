@@ -53,23 +53,21 @@ def load_saved_components():
 # -----------------------------
 # Prediction helper function
 # -----------------------------
-def predict_next_days(model, scaler, recent_values, days, window_size):
+def predict_red_line(model, scaler, green_values, n_red):
     """
-    Predict next `days` prices using only the first 60 green values.
+    Predict next `n_red` days using only green_values as history.
+    This aligns predictions with the red line (actual last 30 days).
     """
-    # Use only first 60 values as history
-    recent_values = recent_values[:60]
+    # Ensure green_values >= window_size
+    if len(green_values) < window_size:
+        pad_len = window_size - len(green_values)
+        green_values = [green_values[0]] * pad_len + green_values
 
-    # Pad if needed for window_size
-    if len(recent_values) < window_size:
-        pad_len = window_size - len(recent_values)
-        recent_values = [recent_values[0]] * pad_len + recent_values
-
-    scaled = scaler.transform(np.array(recent_values).reshape(-1, 1))
+    scaled = scaler.transform(np.array(green_values).reshape(-1, 1))
     scaled_list = list(scaled.flatten())
 
     preds_scaled = []
-    for _ in range(days):
+    for _ in range(n_red):
         seq = np.array(scaled_list[-window_size:]).reshape(1, window_size, 1)
         p = model.predict(seq, verbose=0)
         preds_scaled.append(p.flatten()[0])
@@ -133,8 +131,8 @@ if st.button('Predict'):
         green_values = recent_values[:60].tolist()
         red_values = recent_values[60:90].tolist()  # actual last 30
 
-        # Predict based only on green history
-        predicted_values = predict_next_days(model, scaler, recent_values, days=30, window_size=window_size)
+        # Predict using only green_values for 30 days to match red
+        predicted_red = predict_red_line(model, scaler, green_values, n_red=30)
 
         # -----------------------------
         # Create dates
@@ -142,7 +140,6 @@ if st.button('Predict'):
         today = datetime.today()
         green_dates = [today - timedelta(days=90 - i) for i in range(60)]
         red_dates = [today - timedelta(days=30 - i) for i in range(30)]
-        pred_dates = red_dates  # align predictions with red values
 
         # -----------------------------
         # Plotting
@@ -163,8 +160,8 @@ if st.button('Predict'):
             mode='lines+markers'
         ))
         fig.add_trace(go.Scatter(
-            x=pred_dates,
-            y=predicted_values,
+            x=red_dates,
+            y=predicted_red,
             name='Predicted (from 60 days)',
             line=dict(color='skyblue'),
             mode='lines+markers'
@@ -180,8 +177,8 @@ if st.button('Predict'):
         st.plotly_chart(fig, use_container_width=True)
 
         # Display predicted future prices
-        preds_df = pd.DataFrame({'Predicted_Close ($)': predicted_values}, index=pred_dates)
-        st.subheader('Predicted Prices for Next 30 Days')
+        preds_df = pd.DataFrame({'Predicted_Close ($)': predicted_red}, index=red_dates)
+        st.subheader('Predicted Prices vs Actual Last 30 Days')
         st.dataframe(preds_df.style.format("${:.2f}"))
 
     except Exception as e:
