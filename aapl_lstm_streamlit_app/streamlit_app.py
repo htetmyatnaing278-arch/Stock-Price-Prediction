@@ -188,4 +188,53 @@ if st.button('Predict'):
     except Exception as e:
         st.error(f'Error: {e}')
 
+    # -----------------------------
+# Forecast Future Prices (1–30 Days Ahead)
+# -----------------------------
+st.subheader('📅 Forecast Future Prices')
+
+future_days = st.slider('Select number of future days to forecast:', min_value=1, max_value=30, value=7)
+
+if st.button('Forecast Future'):
+    try:
+        # Use full 90-day window for forecasting
+        forecast_input = values[-window_size:]
+        forecast = predict_sequence(model, scaler, forecast_input, n_days=future_days, window_size=window_size)
+
+        # Forecast dates
+        last_date = datetime.today()
+        forecast_dates = [last_date + timedelta(days=i + 1) for i in range(future_days)]
+
+        # Plot forecast
+        fig_forecast = go.Figure()
+        fig_forecast.add_trace(go.Scatter(
+            x=[last_date - timedelta(days=window_size - i) for i in range(window_size)],
+            y=forecast_input,
+            name='Recent History',
+            line=dict(color='green')
+        ))
+        fig_forecast.add_trace(go.Scatter(
+            x=forecast_dates,
+            y=forecast,
+            name='Forecast',
+            line=dict(color='orange'),
+            mode='lines+markers'
+        ))
+
+        fig_forecast.update_layout(
+            title='Forecasted AAPL Close Prices (Next Days)',
+            xaxis_title='Date',
+            yaxis_title='Price ($)',
+            yaxis=dict(tickformat="$,.2f"),
+            xaxis=dict(tickformat='%Y-%m-%d')
+        )
+        st.plotly_chart(fig_forecast, use_container_width=True)
+
+        # Forecast table
+        forecast_df = pd.DataFrame({'Forecasted_Close ($)': forecast}, index=forecast_dates)
+        st.dataframe(forecast_df.style.format("${:.2f}"))
+
+    except Exception as e:
+        st.error(f'Forecasting error: {e}')
+
 st.markdown('---')
