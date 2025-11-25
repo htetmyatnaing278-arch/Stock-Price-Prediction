@@ -9,6 +9,7 @@ import tensorflow as tf
 from tensorflow.keras.models import load_model
 import yfinance as yf
 from datetime import datetime, timedelta
+from scipy import stats # Import stats globally for clarity
 
 # -----------------------------
 # Reproducibility
@@ -44,17 +45,27 @@ def load_components():
 # Prediction helper
 # -----------------------------
 def predict_sequence(model, scaler, input_values, n_days, window_size):
+    # Ensure input_values is a list of floats
+    input_values = [float(v) for v in input_values]
+    
     if len(input_values) < window_size:
+        # Pad or handle insufficient input if needed, though the UI requires window_size inputs
         input_values = [input_values[0]] * (window_size - len(input_values)) + input_values
-
+        
     scaled = scaler.transform(np.array(input_values).reshape(-1, 1)).flatten()
     preds_scaled = []
 
+    # Use only the last window_size values for the initial sequence
+    current_sequence = scaled[-window_size:] 
+
     for _ in range(n_days):
-        seq = np.array(scaled[-window_size:]).reshape(1, window_size, 1)
+        # Reshape for LSTM input: (1, window_size, 1)
+        seq = np.array(current_sequence).reshape(1, window_size, 1)
         pred = model.predict(seq, verbose=0).flatten()[0]
         preds_scaled.append(pred)
-        scaled = np.append(scaled, pred)
+        
+        # Update sequence for the next prediction (walk forward)
+        current_sequence = np.append(current_sequence[1:], pred)
 
     return scaler.inverse_transform(np.array(preds_scaled).reshape(-1, 1)).flatten()
 
@@ -75,166 +86,177 @@ st.set_page_config(page_title='AAPL Close Price Predictor', layout='wide')
 st.title('📈 AAPL Close Price — LSTM Predictor')
 
 model, scaler, window_size = load_components()
-st.success(f'Model loaded successfully — window_size = {window_size}')
+st.success(f'Model loaded successfully — required window_size = {window_size}')
 
 # -----------------------------
 # Manual Input
 # -----------------------------
-st.subheader('Manual Input')
+st.subheader('Input Historical Data for Prediction')
 latest_price = get_latest_price()
+# Generate window_size random values around the latest price for default input
 default_values = [str(round(latest_price + random.uniform(-3, 3), 2)) for _ in range(window_size)]
 manual_text = st.text_area(f'Enter {window_size} recent Close prices (comma-separated):', value=','.join(default_values))
-days = st.number_input('Days to predict', min_value=1, max_value=30, value=7)
+days = st.number_input('Days to predict into the future (max 30)', min_value=1, max_value=30, value=7)
 
 # -----------------------------
 # Prediction and Plot
 # -----------------------------
-# ... (Previous code remains the same up to the 'Prediction and Plot' section)
-
-# -----------------------------
-# Prediction and Plot
-# -----------------------------
-if st.button('Predict'):
+if st.button('Predict Future Prices'):
     try:
+        # 1. Input Processing
         values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
-        if len(values) < window_size:
-            values = (values * ((window_size // len(values)) + 1))[:window_size]
-
-        recent_series = pd.Series(values)
-        green_values = recent_series[:60].tolist()
-        red_values = recent_series[60:90].tolist()
-
-        predicted_red = predict_sequence(model, scaler, green_values, n_days=30, window_size=window_size)
-
-        # -----------------------------
-        # Dates
-        # -----------------------------
-        today = datetime.today()
-        green_dates = [today - timedelta(days=90 - i) for i in range(60)]
-        red_dates = [today - timedelta(days=30 - i) for i in range(30)]
-
-        # -----------------------------
-        # CI Calculation (Required for the table)
-        # -----------------------------
-        if len(red_values) == len(predicted_red):
-            from scipy import stats
-            
-            # 1. Calculate Residuals and Squared Error
-            residual = np.array(red_values) - np.array(predicted_red)
-            squared_error = residual ** 2
-            mean_squared_error = squared_error.mean()
-            
-            # 2. Calculate the 95% CI for the Mean Squared Error (MSE)
-            ci_level = 0.95
-            mse_ci_low, mse_ci_high = stats.t.interval(
-                ci_level, 
-                len(squared_error) - 1,
-                loc=mean_squared_error,
-                scale=stats.sem(squared_error)
-            )
-            
-            # 3. Convert CI for MSE back to CI for RMSE
-            rmse_ci_low = np.sqrt(max(0, mse_ci_low)) 
-            rmse_ci_high = np.sqrt(mse_ci_high)
-            
-            rmse_ci_95 = (rmse_ci_low, rmse_ci_high)
-            
-            st.subheader('Prediction Error Analysis')
-            st.info(
-                f'The **Root Mean Squared Error (RMSE)** for the last 30 days of actual vs. predicted prices is in the **95% Confidence Interval** of **${rmse_ci_95[0]:.2f}** to **${rmse_ci_95[1]:.2f}**.'
-            )
-        else:
-            # Fallback if prediction length is mismatched (shouldn't happen here, but good practice)
-            rmse_ci_low = 0.0
-            rmse_ci_high = 0.0
         
-        # -----------------------------
-        # Plot (Unchanged)
-        # -----------------------------
+        if len(values) < window_size:
+            st.error(f'Please enter at least {window_size} values for the input sequence.')
+            st.stop()
+        
+        # Use the last window_size elements for the prediction
+        input_history = values[-window_size:]
+        
+        # ---------------------------------------------
+        # 2. CALIBRATION RUN (To calculate RMSE CI)
+        # ---------------------------------------------
+        # For calibration, we need data to compare against. Assuming the first 60% 
+        # of the input is history (X) and the remaining is actuals (Y) for error estimation.
+        
+        # We will use the first half of the input as history (X_calib) to predict the second half (Y_calib)
+        CALIB_SIZE = min(window_size, 30) # Use 30 days for calibration
+        
+        # X_calib: The first (window_size - CALIB_SIZE) days of input
+        X_calib = input_history[:-CALIB_SIZE] 
+        # Y_calib (Actuals): The last CALIB_SIZE days of input
+        Y_calib = input_history[-CALIB_SIZE:] 
+
+        # Predict the Y_calib period using the X_calib history
+        predicted_calib = predict_sequence(
+            model, 
+            scaler, 
+            X_calib, 
+            n_days=CALIB_SIZE, 
+            window_size=window_size
+        )
+        
+        # Calculate RMSE CI using calibration data
+        residual = np.array(Y_calib) - np.array(predicted_calib)
+        squared_error = residual ** 2
+        mean_squared_error = squared_error.mean()
+        
+        ci_level = 0.95
+        mse_ci_low, mse_ci_high = stats.t.interval(
+            ci_level, 
+            len(squared_error) - 1,
+            loc=mean_squared_error,
+            scale=stats.sem(squared_error)
+        )
+        
+        rmse_ci_high = np.sqrt(mse_ci_high)
+        
+        # Display Calibration Info
+        st.subheader('Calibration Analysis')
+        st.info(
+            f'Historical error (RMSE CI) calculated over {CALIB_SIZE} days: Margin of Error (95% CI High Bound) = **${rmse_ci_high:.2f}**'
+        )
+
+        # ---------------------------------------------
+        # 3. FORWARD PREDICTION RUN
+        # ---------------------------------------------
+        # Use the full input_history to predict the next 'days'
+        future_predictions = predict_sequence(
+            model, 
+            scaler, 
+            input_history, 
+            n_days=days, 
+            window_size=window_size
+        )
+
+        # ---------------------------------------------
+        # 4. Dates
+        # ---------------------------------------------
+        today = datetime.today()
+        # Dates for the input history (window_size days ending yesterday)
+        history_dates = [today - timedelta(days=window_size - i) for i in range(window_size)]
+        
+        # Dates for the future prediction (starting today + 1)
+        future_dates = [today + timedelta(days=i + 1) for i in range(days)]
+
+        # ---------------------------------------------
+        # 5. Plot (History + Future Prediction + CI Band)
+        # ---------------------------------------------
+        st.subheader('Future Price Forecast with 95% Confidence Band')
+        
+        # Apply the RMSE CI margin to the future predictions
+        future_low = future_predictions - rmse_ci_high
+        future_high = future_predictions + rmse_ci_high
+        
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=green_dates, y=green_values, name='History (60 days)', line=dict(color='green')))
-        fig.add_trace(go.Scatter(x=red_dates, y=red_values, name='Actual last 30 days', line=dict(color='red')))
-        fig.add_trace(go.Scatter(x=red_dates, y=predicted_red, name='Predicted (from 60 days)', line=dict(color='skyblue')))
+
+        # Trace 1: Historical Input Data
+        fig.add_trace(go.Scatter(
+            x=history_dates, 
+            y=input_history, 
+            name='Historical Input', 
+            line=dict(color='green', width=2)
+        ))
+        
+        # Trace 2: Predicted Upper Bound (Hidden line for filling)
+        fig.add_trace(go.Scatter(
+            x=future_dates, 
+            y=future_high, 
+            name='95% CI Upper', 
+            mode='lines',
+            line=dict(width=0),
+            showlegend=False
+        ))
+        
+        # Trace 3: Predicted Lower Bound (Filled area)
+        fig.add_trace(go.Scatter(
+            x=future_dates, 
+            y=future_low, 
+            name='95% CI Range', 
+            mode='lines',
+            line=dict(width=0),
+            fill='tonexty', # Fill the area between upper and lower bound
+            fillcolor='rgba(135, 206, 250, 0.3)' # Light blue transparent fill
+        ))
+
+        # Trace 4: Point Prediction Line
+        fig.add_trace(go.Scatter(
+            x=future_dates, 
+            y=future_predictions, 
+            name='Point Prediction', 
+            line=dict(color='skyblue', width=3, dash='dot')
+        ))
 
         fig.update_layout(
-            title='AAPL Close Price Prediction vs Actual',
+            title=f'AAPL Price Forecast: Next {days} Days',
             xaxis_title='Date',
-            yaxis_title='Price ($)',
+            yaxis_title='Predicted Close Price ($)',
             yaxis=dict(tickformat="$,.2f"),
-            xaxis=dict(tickformat='%Y-%m-%d')
+            xaxis=dict(tickformat='%Y-%m-%d'),
+            hovermode="x unified",
+            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # -----------------------------
-        # Table (NEW/MODIFIED)
-        # -----------------------------
-        st.subheader('Predicted Prices with 95% Confidence Interval')
+        # ---------------------------------------------
+        # 6. Table (Future Predictions)
+        # ---------------------------------------------
+        st.subheader(f'Detailed Forecast: Next {days} Trading Days')
         
-        # Apply the RMSE CI bounds to the predicted values to create the range
-        predicted_low = predicted_red - rmse_ci_high 
-        predicted_high = predicted_red + rmse_ci_high
+        # Create the DataFrame for future predictions
+        future_df = pd.DataFrame({
+            'Predicted Price ($)': future_predictions,
+            'CI 95% Lower Bound ($)': future_low,
+            'CI 95% Upper Bound ($)': future_high
+        }, index=future_dates)
         
-        # Create the DataFrame
-        preds_df = pd.DataFrame({
-            'Actual Price ($)': red_values,
-            'Predicted Price ($)': predicted_red,
-            'CI 95% Lower Bound ($)': predicted_low,
-            'CI 95% Upper Bound ($)': predicted_high
-        }, index=red_dates)
+        future_df.index.name = "Forecast Date"
         
         # Display the DataFrame with formatting
-        st.dataframe(preds_df.style.format("${:.2f}"))
+        st.dataframe(future_df.style.format("${:.2f}"))
 
     except Exception as e:
-        st.error(f'Error: {e}')
-
-    # -----------------------------
-# Forecast Future Prices (1–30 Days Ahead)
-# -----------------------------
-st.subheader('📅 Forecast Future Prices')
-
-future_days = st.slider('Select number of future days to forecast:', min_value=1, max_value=30, value=7)
-
-if st.button('Forecast Future'):
-    try:
-        # Use full 90-day window for forecasting
-        forecast_input = values[-window_size:]
-        forecast = predict_sequence(model, scaler, forecast_input, n_days=future_days, window_size=window_size)
-
-        # Forecast dates
-        last_date = datetime.today()
-        forecast_dates = [last_date + timedelta(days=i + 1) for i in range(future_days)]
-
-        # Plot forecast
-        fig_forecast = go.Figure()
-        fig_forecast.add_trace(go.Scatter(
-            x=[last_date - timedelta(days=window_size - i) for i in range(window_size)],
-            y=forecast_input,
-            name='Recent History',
-            line=dict(color='green')
-        ))
-        fig_forecast.add_trace(go.Scatter(
-            x=forecast_dates,
-            y=forecast,
-            name='Forecast',
-            line=dict(color='orange'),
-            mode='lines+markers'
-        ))
-
-        fig_forecast.update_layout(
-            title='Forecasted AAPL Close Prices (Next Days)',
-            xaxis_title='Date',
-            yaxis_title='Price ($)',
-            yaxis=dict(tickformat="$,.2f"),
-            xaxis=dict(tickformat='%Y-%m-%d')
-        )
-        st.plotly_chart(fig_forecast, use_container_width=True)
-
-        # Forecast table
-        forecast_df = pd.DataFrame({'Forecasted_Close ($)': forecast}, index=forecast_dates)
-        st.dataframe(forecast_df.style.format("${:.2f}"))
-
-    except Exception as e:
-        st.error(f'Forecasting error: {e}')
+        st.error(f'An error occurred during prediction: {e}')
+        st.warning('Please ensure your input contains valid, comma-separated numbers and the number of inputs matches the required window size.')
 
 st.markdown('---')
