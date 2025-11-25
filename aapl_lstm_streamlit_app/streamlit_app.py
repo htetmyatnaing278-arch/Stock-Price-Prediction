@@ -89,6 +89,11 @@ days = st.number_input('Days to predict', min_value=1, max_value=30, value=7)
 # -----------------------------
 # Prediction and Plot
 # -----------------------------
+# ... (Previous code remains the same up to the 'Prediction and Plot' section)
+
+# -----------------------------
+# Prediction and Plot
+# -----------------------------
 if st.button('Predict'):
     try:
         values = [float(x.strip()) for x in manual_text.split(',') if x.strip()]
@@ -108,24 +113,19 @@ if st.button('Predict'):
         green_dates = [today - timedelta(days=90 - i) for i in range(60)]
         red_dates = [today - timedelta(days=30 - i) for i in range(30)]
 
-        # --- NEW CI CALCULATION ---
+        # -----------------------------
+        # CI Calculation (Required for the table)
+        # -----------------------------
         if len(red_values) == len(predicted_red):
             from scipy import stats
             
-            # 1. Calculate the residuals
+            # 1. Calculate Residuals and Squared Error
             residual = np.array(red_values) - np.array(predicted_red)
-            
-            # 2. Calculate the squared error (for MSE)
             squared_error = residual ** 2
-            
-            # 3. Calculate the Mean Squared Error (MSE)
             mean_squared_error = squared_error.mean()
             
-            # 4. Calculate the 95% CI for the Mean Squared Error
-            # The t-interval is calculated on the squared errors (MSE)
+            # 2. Calculate the 95% CI for the Mean Squared Error (MSE)
             ci_level = 0.95
-            
-            # Note: stats.sem calculates the Standard Error of the Mean
             mse_ci_low, mse_ci_high = stats.t.interval(
                 ci_level, 
                 len(squared_error) - 1,
@@ -133,22 +133,23 @@ if st.button('Predict'):
                 scale=stats.sem(squared_error)
             )
             
-            # 5. Convert CI for MSE back to CI for RMSE
-            # We take the square root of the CI bounds for MSE to get the CI bounds for RMSE.
-            rmse_ci_low = np.sqrt(max(0, mse_ci_low)) # Use max(0,...) to handle possible negative lower bound for small samples
+            # 3. Convert CI for MSE back to CI for RMSE
+            rmse_ci_low = np.sqrt(max(0, mse_ci_low)) 
             rmse_ci_high = np.sqrt(mse_ci_high)
             
             rmse_ci_95 = (rmse_ci_low, rmse_ci_high)
             
-            # 6. Display the CI in Streamlit
             st.subheader('Prediction Error Analysis')
             st.info(
                 f'The **Root Mean Squared Error (RMSE)** for the last 30 days of actual vs. predicted prices is in the **95% Confidence Interval** of **${rmse_ci_95[0]:.2f}** to **${rmse_ci_95[1]:.2f}**.'
             )
+        else:
+            # Fallback if prediction length is mismatched (shouldn't happen here, but good practice)
+            rmse_ci_low = 0.0
+            rmse_ci_high = 0.0
+        
         # -----------------------------
-
-        # -----------------------------
-        # Plot
+        # Plot (Unchanged)
         # -----------------------------
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=green_dates, y=green_values, name='History (60 days)', line=dict(color='green')))
@@ -165,10 +166,23 @@ if st.button('Predict'):
         st.plotly_chart(fig, use_container_width=True)
 
         # -----------------------------
-        # Table
+        # Table (NEW/MODIFIED)
         # -----------------------------
-        st.subheader('Predicted Prices vs Actual Last 30 Days')
-        preds_df = pd.DataFrame({'Predicted_Close ($)': predicted_red}, index=red_dates)
+        st.subheader('Predicted Prices with 95% Confidence Interval')
+        
+        # Apply the RMSE CI bounds to the predicted values to create the range
+        predicted_low = predicted_red - rmse_ci_high 
+        predicted_high = predicted_red + rmse_ci_high
+        
+        # Create the DataFrame
+        preds_df = pd.DataFrame({
+            'Actual Price ($)': red_values,
+            'Predicted Price ($)': predicted_red,
+            'CI 95% Lower Bound ($)': predicted_low,
+            'CI 95% Upper Bound ($)': predicted_high
+        }, index=red_dates)
+        
+        # Display the DataFrame with formatting
         st.dataframe(preds_df.style.format("${:.2f}"))
 
     except Exception as e:
