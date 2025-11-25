@@ -108,6 +108,45 @@ if st.button('Predict'):
         green_dates = [today - timedelta(days=90 - i) for i in range(60)]
         red_dates = [today - timedelta(days=30 - i) for i in range(30)]
 
+        # --- NEW CI CALCULATION ---
+        if len(red_values) == len(predicted_red):
+            from scipy import stats
+            
+            # 1. Calculate the residuals
+            residual = np.array(red_values) - np.array(predicted_red)
+            
+            # 2. Calculate the squared error (for MSE)
+            squared_error = residual ** 2
+            
+            # 3. Calculate the Mean Squared Error (MSE)
+            mean_squared_error = squared_error.mean()
+            
+            # 4. Calculate the 95% CI for the Mean Squared Error
+            # The t-interval is calculated on the squared errors (MSE)
+            ci_level = 0.95
+            
+            # Note: stats.sem calculates the Standard Error of the Mean
+            mse_ci_low, mse_ci_high = stats.t.interval(
+                ci_level, 
+                len(squared_error) - 1,
+                loc=mean_squared_error,
+                scale=stats.sem(squared_error)
+            )
+            
+            # 5. Convert CI for MSE back to CI for RMSE
+            # We take the square root of the CI bounds for MSE to get the CI bounds for RMSE.
+            rmse_ci_low = np.sqrt(max(0, mse_ci_low)) # Use max(0,...) to handle possible negative lower bound for small samples
+            rmse_ci_high = np.sqrt(mse_ci_high)
+            
+            rmse_ci_95 = (rmse_ci_low, rmse_ci_high)
+            
+            # 6. Display the CI in Streamlit
+            st.subheader('Prediction Error Analysis')
+            st.info(
+                f'The **Root Mean Squared Error (RMSE)** for the last 30 days of actual vs. predicted prices is in the **95% Confidence Interval** of **${rmse_ci_95[0]:.2f}** to **${rmse_ci_95[1]:.2f}**.'
+            )
+        # -----------------------------
+
         # -----------------------------
         # Plot
         # -----------------------------
