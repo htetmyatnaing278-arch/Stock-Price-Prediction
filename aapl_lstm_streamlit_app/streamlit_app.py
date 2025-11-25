@@ -9,8 +9,6 @@ import tensorflow as tf
 from tensorflow.keras.models import load_model
 import yfinance as yf
 from datetime import datetime, timedelta
-# Import the necessary scipy function for error estimation if needed later
-# from scipy import stats # Kept commented as the error is provided manually
 
 # -----------------------------
 # Reproducibility
@@ -26,14 +24,8 @@ except Exception:
     pass
 
 # -----------------------------
-# USER-DEFINED FORECAST ERROR PARAMETER ⚠️
+# Load model, scaler, and window size
 # -----------------------------
-# This value must be derived from your training analysis (e.g., the square root of 
-# the upper bound of the 95% CI for the Mean Squared Error on the test set).
-# I am using a placeholder value (e.g., 5.0) which you MUST REPLACE with your actual calculated error.
-ESTIMATED_FORECAST_ERROR_SIGMA = 5.0 
-Z_SCORE_95 = 1.96 # Z-score for 95% confidence
-
 @st.cache_resource
 def load_saved_components():
     model_path = 'aapl_lstm_streamlit_app/lstm_aapl_model.h5'
@@ -103,13 +95,7 @@ st.subheader('Manual Input')
 
 latest_price = get_latest_aapl_price()
 if latest_price is None:
-    latest_price = 170.0 # Placeholder for old code
-
-# Display sigma information
-st.info(
-    f"Confidence Interval (CI) is calculated using $\\sigma = {ESTIMATED_FORECAST_ERROR_SIGMA}$ "
-    f"derived from your test set MSE analysis. This represents the $95\%$ likely range of error."
-)
+    latest_price = 170.0
 
 # Default prices around latest price
 default_values = [
@@ -146,88 +132,40 @@ if st.button('Predict'):
         # Combine dates for plotting connection
         pred_x = [history_dates[-1]] + pred_dates
         pred_y = [values[-1]] + list(preds)
-        
-        # -----------------------------
-        # CALCULATE CONFIDENCE INTERVAL (CI) 💰
-        # -----------------------------
-        # The deviation is Z * sigma
-        deviation = Z_SCORE_95 * ESTIMATED_FORECAST_ERROR_SIGMA
-        
-        # Upper and Lower Bounds for the predicted prices (excluding the start point)
-        upper_bound = preds + deviation
-        lower_bound = preds - deviation
-        
-        # For plotting the CI polygon, we need the bounds for the entire prediction period,
-        # starting from the last known actual price.
-        ci_x_full = pred_dates + pred_dates[::-1]
-        ci_y_full = np.concatenate([upper_bound, lower_bound[::-1]])
-        
+
         # -----------------------------
         # Plotting
         # -----------------------------
         fig = go.Figure()
 
-        # 1️⃣ Confidence Interval (Area)
-        fig.add_trace(go.Scatter(
-            x=ci_x_full,
-            y=ci_y_full,
-            fill='toself',
-            fillcolor='rgba(255, 0, 0, 0.1)', # Light red transparency
-            line=dict(color='rgba(255, 255, 255, 0)'),
-            hoverinfo='skip',
-            name='95% Prediction Interval'
-        ))
-        
-        # 2️⃣ Manual history
+        # Manual history
         fig.add_trace(go.Scatter(
             x=history_dates,
             y=values,
-            name='Input History',
+            name='Manual history',
             line=dict(color='green')
         ))
 
-        # 3️⃣ Predicted values (connected)
+        # Predicted values (connected)
         fig.add_trace(go.Scatter(
             x=pred_x,
             y=pred_y,
-            name='Predicted Close',
+            name='Predicted',
             mode='lines+markers',
             line=dict(color='red')
         ))
-        
-        # 4️⃣ CI Bounds (as separate lines for clarity in the legend/hover)
-        fig.add_trace(go.Scatter(
-            x=pred_dates,
-            y=upper_bound,
-            name=f'Upper Bound (+{deviation:.2f})',
-            line=dict(width=0, color='red') # Make invisible line to show in legend
-        ))
-        fig.add_trace(go.Scatter(
-            x=pred_dates,
-            y=lower_bound,
-            name=f'Lower Bound (-{deviation:.2f})',
-            line=dict(width=0, color='red') # Make invisible line to show in legend
-        ))
 
         fig.update_layout(
-            title='Forecast with 95% Prediction Interval',
+            title='Manual Input — Predicted Close',
             xaxis_title='Date',
             yaxis_title='Price ($)',
             xaxis=dict(tickformat='%Y-%m-%d')
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # -----------------------------
-        # Display predicted values and CI 
-        # -----------------------------
-        preds_df = pd.DataFrame({
-            'Predicted_Close': preds,
-            f'Lower_Bound (-{deviation:.2f})': lower_bound,
-            f'Upper_Bound (+{deviation:.2f})': upper_bound
-        }, index=pred_dates)
-        
-        st.subheader(f'Forecast and 95% CI for the Next {days} Days')
-        st.dataframe(preds_df.style.format("{:.2f}"))
+        # Display predicted values in a DataFrame
+        preds_df = pd.DataFrame({'Predicted_Close': preds}, index=pred_dates)
+        st.dataframe(preds_df)
 
     except Exception as e:
         st.error(f'Input error: {e}')
