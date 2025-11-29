@@ -83,7 +83,7 @@ def get_latest_price():
 # Streamlit UI
 # -----------------------------
 st.set_page_config(page_title='AAPL Close Price Predictor', layout='wide')
-st.title('📈 AAPL Close Price — LSTM Predictor')
+st.title('AAPL Close Price — LSTM Predictor')
 
 model, scaler, window_size = load_components()
 st.success(f'Model loaded successfully — required window_size = {window_size}')
